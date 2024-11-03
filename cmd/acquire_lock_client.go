@@ -39,8 +39,6 @@
 package main
 
 import (
-	"api"
-	"client"
 	"flag"
 	"fmt"
 	"log"
@@ -48,6 +46,10 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/Collaboration95/DistributedSystem_ProjectPlaceholderName.git/api"
+
+	"github.com/Collaboration95/DistributedSystem_ProjectPlaceholderName.git/client"
 )
 
 var acquireLock_clientID string // ID of this client.
