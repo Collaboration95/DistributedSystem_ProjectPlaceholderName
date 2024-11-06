@@ -493,6 +493,7 @@ func (sess *ClientSession) IsExpired() bool {
 
 // --------------------------------------------------------------------------------------------
 // ADDED FUNCTIONS BELOW FROM NITHYA & CHEE KIAT CLIENT SIDE 7 NOV 140AM
+// TODO MODIFY SYNTAX SO THAT THE FUNCTIONS BELOW CAN BE USED OR UPDATE CORRESPONDING FUNCTIONS ABOVE
 
 // // Request Lock of type write for a particular seat
 // func (s *ClientSession) RequestLock(seatID string, clientID string) error {
