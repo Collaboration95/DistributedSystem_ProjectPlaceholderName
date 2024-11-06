@@ -112,9 +112,8 @@ func (sess *Session) MonitorSession() {
 
 // terminate the session
 func (sess *Session) TerminateSession() {
-	// we cannot just delete the session from the app session map bcos
 	// we cannot delete the session from the app session map bcos
-	// chubby could have experience a failover event
+	// chubby could have experienced a failover event
 
 	sess.terminated = true
 	close(sess.terminatedChan)
@@ -136,7 +135,7 @@ func (sess *Session) TerminateSession() {
 }
 
 // extend lease after receiving keepAlive messages
-func (sess *Session) keepAlive(clientID api.ClientID) time.Duration {
+func (sess *Session) KeepAlive(clientID api.ClientID) time.Duration {
 	// block until shortly before lease expires
 	select {
 	case <-sess.terminatedChan:
@@ -220,4 +219,94 @@ func (sess *Session) TryAcquireLock(path api.FilePath, mode api.LockMode) (bool,
 	}
 
 	// do we already own the lock? fail with error
+
+	// check if lock exists in persistent store
+	_, err := app.store.Get(string(path))
+
+	if err != nil {
+		return false, errors.New(fmt.Sprintf("Lock at %s has not been opened", path))
+	}
+
+	// check if lock exists in in-mem struct
+	lock, exists := app.locks[path]
+	if !exists {
+		// assume some failure has occured
+		// recover lock struct: add lock to in-memory struct of locks
+		app.logger.Printf("Lock does not exist wuth Client ID", sess.clientID)
+
+		lock = &Lock{
+			path:    path,
+			mode:    api.FREE,
+			owners:  make(map[api.ClientID]bool),
+			content: "",
+		}
+		app.locks[path] = lock
+		sess.locks[path] = lock
+	}
+
+	// check the mode of the lock
+	switch lock.mode {
+	case api.EXCLUSIVE:
+		// should fail: someone probably already owns the lock
+		if len(lock.owners) == 0 {
+			// throw an error if there are no owners but lock.mode is api.EXCLUSIVE:
+			// this means ReleaseLock was not implemented correctly
+			return false, errors.New("Lock has EXCLUSIVE mode despite having no owners")
+
+		} else if len(lock.owners) > 1 {
+			return false, errors.New("Lock has EXCLUSIVE mode despite having multiple owners")
+		} else {
+			// fail with no error
+			app.logger.Printf("Failed to acquire lock %s: already held in EXCLUSIVE mode", path)
+			return false, nil
+		}
+
+	case api.SHARED:
+		// IF MODE IS api.SHARED, then succeed; else fail
+		if mode == api.EXCLUSIVE {
+			app.logger.Printf("Failed to acquire lock %s in EXCLUSIVE mode: already held in SHARED mode", path)
+			return false, nil
+		} else { // mode == api.SHARED
+			// update lock owners
+			lock.owners[sess.clientID] = true
+
+			// add lock to session lock struct
+			sess.locks[path] = lock
+			sess.locks[path] = lock
+			// return success
+			// app.logger.Printf("Lock %s acquired successfully with mode SHARED", path)
+			return true, nil
+		}
+	case api.FREE:
+		// if lock has owners, either TryAcquireLock or ReleaseLock was not implemented correctly
+		if len(lock.owners) > 0 {
+			return false, errors.New("Lock has FREE mode but is owned by 1 or more clients")
+
+		}
+		// should succeed regardless of mode
+		// update lock owners
+		lock.owners[sess.clientID] = true
+
+		// update lock mode
+		lock.mode = mode
+
+		// add lock to session lock struct
+		sess.locks[path] = lock
+
+		// update lock mode in the global map
+		app.locks[path] = lock
+
+		// Return success
+		//if mode == api.SHARED {
+		//	app.logger.Printf("Lock %s acquired successfully with mode SHARED", path)
+		//} else {
+		//	app.logger.Printf("Lock %s acquired successfully with mode EXCLUSIVE", path)
+		//}
+
+		return true, nil
+	default:
+		return false, errors.New(fmt.Sprintf("Lock at %s has undefined mode %d", path, lock.mode))
+	}
 }
+
+// RELEASE THE LOCK
