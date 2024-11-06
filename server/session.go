@@ -6,6 +6,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -310,3 +311,113 @@ func (sess *Session) TryAcquireLock(path api.FilePath, mode api.LockMode) (bool,
 }
 
 // RELEASE THE LOCK
+func (sess *Session) ReleaseLock(path api.FilePath) error {
+	// check if lock exists in persistent store
+	_, err := app.store.Get(string(path))
+
+	if err != nil {
+		return errors.New(fmt.Sprintf("Client with id %s: Lock at %s does not exist in persistent store", path, sess.clientID))
+	}
+
+	// grab lock struct from session locks map
+	lock, present := app.locks[path]
+
+	// if not in session locks map, throw an error
+	if !present || lock == nil {
+		return errors.New(fmt.Sprintf("Lock at %s does not exist in session locks map", path))
+	}
+
+	// switch on lock mode
+	switch lock.mode {
+	case api.FREE:
+		// throw an error: this means TryAcquire was not implemented correctly
+		return errors.New(fmt.Sprint("Lock at %s has FREE mode: acquire not implemented correctly Client ID %s", path, sess.clientID))
+	case api.EXCLUSIVE:
+		// delete lock from owners
+		delete(lock.owners, sess.clientID)
+
+		// set lock mode
+		lock.mode = api.FREE
+
+		// delete lock from session locks map
+		delete(sess.locks, path)
+		app.locks[path] = lock
+		log.Printf("Release lock at %s\n", path)
+		// return without error
+		return nil
+	case api.SHARED:
+		// delete from lock owners
+		delete(lock.owners, sess.clientID)
+
+		// set lock mode if no more owners
+		if len(lock.owners) == 0 {
+			lock.mode = api.FREE
+		}
+
+		// delete lock from session locks map
+		delete(sess.locks, path)
+		app.locks[path] = lock
+
+		// return without error
+		return nil
+	default:
+		return errors.New(fmt.Sprintf("Lock at %s has undefined mode %d", path, lock.mode))
+
+	}
+}
+
+// read the content from a lockfile
+func (sess *Session) ReadContent(path api.FilePath) (string, error) {
+	// check if file exists in persistent store
+	content, err := app.store.Get(string(path))
+
+	if err != nil {
+		return "", errors.New(fmt.Sprintf("Client with id %s: File at %s does not exist in persistent store", path, sess.clientID))
+	}
+
+	// grab lock struct from session locks map
+	lock, present := app.locks[path]
+
+	// if not in session locks map, throw an error
+	if !present || lock == nil {
+		return "", errors.New(fmt.Sprintf("Lock at %s does not exist in session locks map", path))
+	}
+
+	// check that we are among the owners of the lock
+	_, present = lock.owners[sess.clientID]
+	if !present || !lock.owners[sess.clientID] {
+		return "", errors.New(fmt.Sprintf("Client %d does not own lock at path %s", sess.clientID, path))
+	}
+	return content, nil
+}
+
+// write the content to a lockfile
+func (sess *Session) WriteContent(path api.FilePath, content string) error {
+	// check if file exists in persistent store
+	_, err := app.store.Get(string(path))
+
+	if err != nil {
+		return errors.New(fmt.Sprintf("Client with id %s: File at %s does not exist in persistent store", path, sess.clientID))
+	}
+
+	// grab lock struct from session locks map
+	lock, present := app.locks[path]
+
+	// if not in session locks map, throw an error
+	if !present || lock == nil {
+		return errors.New(fmt.Sprintf("Lock at %s does not exist in session locks map", path))
+	}
+
+	// check that we are among the owners of the lock
+	_, present = lock.owners[sess.clientID]
+	if !present || !lock.owners[sess.clientID] {
+		return errors.New(fmt.Sprintf("Client %d does not own lock at path %s", sess.clientID, path))
+	}
+
+	err = app.store.Set(string(path), content)
+	if err != nil {
+		return errors.New(fmt.Sprintf("Write Error"))
+	}
+	return nil
+
+}
