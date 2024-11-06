@@ -45,13 +45,27 @@ type ClientSession struct {
 	logger *log.Logger
 }
 
+//seat has 3 status
+//free - not reserved or booked
+//reserved - in the process of booking but not booked
+//booked - booked
+
+// Client, representing browser, interacts with session
+type Client struct {
+	clientID      int
+	chubbySession *ClientSession //seat has 3 status
+
+	seatReserved []string //IDs of seats
+	seatBooked   []string //IDs of seats
+}
+
 const DefaultLeaseDuration time.Duration = 12 * time.Second
 const JeopardyDuration time.Duration = 45 * time.Second
 
 // Set up a Chubby session and periodically send KeepAlives to the server.
 // This method should be run as a new goroutine by the client.
 func InitSession(clientID api.ClientID) (*ClientSession, error) {
-	// Initialize a session.
+	// step 1: Initialize a session. Init session fields
 	sess := &ClientSession{
 		clientID:     clientID,
 		startTime:    time.Now(),
@@ -65,15 +79,16 @@ func InitSession(clientID api.ClientID) (*ClientSession, error) {
 
 	// Find leader by trying to establish a session with any of the
 	// possible server addresses.
+	// Step 2: Attempt to connect to known chubby servers
 	for serverAddr := range PossibleServerAddrs {
-		// Try to set up TCP connection to server.
+		// Try to set up TCP connection to server. - Try to connect to each known server address
 		rpcClient, err := rpc.Dial("tcp", serverAddr)
 		if err != nil {
-			sess.logger.Printf("RPC Dial error: %s", err.Error())
+			sess.logger.Printf("Failed to connect to server at %s . RPC Dial error: %s", serverAddr, err.Error())
 			continue
 		}
 
-		// Make RPC call.
+		//Step 3: Make RPC call. Initialize a session on the server
 		sess.logger.Printf("Sending InitSession request to server %s", serverAddr)
 		req := api.InitSessionRequest{ClientID: clientID}
 		resp := &api.InitSessionResponse{}
@@ -99,7 +114,7 @@ func InitSession(clientID api.ClientID) (*ClientSession, error) {
 	}
 
 	if sess.serverAddr == "" {
-		return nil, errors.New("Could not connect to any server.")
+		return nil, errors.New("could not connect to any server")
 	}
 
 	// Call MonitorSession.
@@ -144,6 +159,7 @@ func (sess *ClientSession) MonitorSession() {
 		durationJeopardyOver := time.Until(sess.startTime.Add(sess.leaseLength + JeopardyDuration))
 
 		select {
+		// TODO PURPOSE OF TICKER CASE IN NITHYA CHEE KIAT BRANCH?
 		case resp := <-keepAliveChan:
 			// Process master's response
 			// The master's response should contain a new, extended lease timeout.
@@ -155,7 +171,7 @@ func (sess *ClientSession) MonitorSession() {
 			}
 			sess.leaseLength = resp.LeaseLength
 
-		case <-time.After(durationLeaseOver):
+		case <-time.After(durationLeaseOver): // Trigger jeopardy if no response before lease expiry
 			// Jeopardy period begins
 			// If no response within local lease timeout, we have to block all RPCs
 			// from the client until the jeopardy period is over.
@@ -276,6 +292,9 @@ func (sess *ClientSession) MonitorSession() {
 		}
 	}
 }
+
+// OPERATIONS ON THE LOCK BY CLIENT SIDE
+// OPERATION 1 ON LOCK:
 
 // Current plan is to implement a function for each Chubby library call.
 // Each function should check jeopardyFlag to see if call should be blocked.
@@ -471,3 +490,86 @@ func (sess *ClientSession) WriteContent(filePath api.FilePath, content string) (
 func (sess *ClientSession) IsExpired() bool {
 	return sess.expired
 }
+
+// --------------------------------------------------------------------------------------------
+// ADDED FUNCTIONS BELOW FROM NITHYA & CHEE KIAT CLIENT SIDE 7 NOV 140AM
+
+// // Request Lock of type write for a particular seat
+// func (s *ClientSession) RequestLock(seatID string, clientID string) error {
+// 	s.mutex.Lock()
+// 	defer s.mutex.Unlock()
+// 	//checks if seatID is found in the map s.Locks
+// 	//ok is true if found and false if not found
+// 	lockMode, ok := s.locks[seatID]
+// 	//if lock exists and is a writelock return error
+// 	if ok && lockMode.Type == WriteLock {
+// 		return fmt.Errorf("Seat %s is currently locked", seatID)
+// 	}
+// 	req := &Request{SeatID: seatID, ClientID: clientID}
+// 	resp := new(Response)
+// 	err := s.rpcClient.Call(serverHandler.RequestLock, req, resp)
+// 	if err != nil || !resp.Success {
+// 		return fmt.Errorf("Unable to require lock on seat %s", seatID)
+// 	}
+// 	// If successful, add the write lock to the local map.
+// 	s.locks[seatID] = LockMode{Type: WriteLock}
+// 	s.logger.Printf("Lock aquired for seat %s by client ID %s", seatID, clientID)
+// 	return nil
+// }
+
+// // Release Lock of type write for a particular seat if client changes mind
+// func (s *Session) ReleaseLock(seatID string, clientID string) error {
+// 	s.mutex.Lock()
+// 	defer s.mutex.Unlock()
+// 	//checks if seatID is found in the map s.Locks
+// 	//ok is true if found and false if not found
+// 	lockMode, ok := s.locks[seatID]
+// 	//if no write lock is found for the seat return error
+// 	if !ok || lockMode.Type != WriteLock {
+// 		return fmt.Errorf("Unable to find write lock for seat %s ", seatID)
+// 	}
+// 	req := &Request{SeatID: seatID, ClientID: clientID}
+// 	resp := new(Response)
+// 	err := s.rpcClient.Call(serverHandler.ReleaseLock, req, resp)
+// 	if err != nil || !resp.Success {
+// 		return fmt.Errorf("Unable to release lock on seat %s", seatID)
+// 	}
+// 	// If successful, remove the write lock from the local map.
+// 	delete(s.locks, seatID)
+// 	s.logger.Printf("Lock released for seat %s by client ID %s", seatID, clientID)
+// 	return nil
+// }
+
+// // Delete Lock of type write for a particular seat if client chooses seat
+// func (s *Session) DeleteLock(seatID string, clientID string) error {
+// 	s.mutex.Lock()
+// 	defer s.mutex.Unlock()
+// 	req := &Request{SeatID: seatID, ClientID: clientID}
+// 	resp := new(Response)
+// 	err := s.rpcClient.Call(serverHandler.DeleteLock, req, resp)
+// 	if err != nil || !resp.Success {
+// 		return fmt.Errorf("Unable to delete lock for seat %s", seatID)
+// 	}
+// 	// If successful, remove the write lock from the local map.
+// 	delete(s.locks, seatID)
+// 	s.logger.Printf("Lock deleted for seat %s by client ID %s", seatID, clientID)
+// 	return nil
+// }
+
+// func (client *Client) ReserveSeat(seatID string, clientId string) {
+
+// 	// ask chubby session to request write lock
+// 	// if denied write lock access, chubby session send failure message ("seat %s is currently reserved, booked, or unavailable", seatID)
+// 	// client will do hot reload on that particular seat to show reserved
+
+// 	// if successful, chubby session will store write lock, and send success acknowledgement back to client
+// 	// client then updates seat status to reserved in DB and update UI in seat status on webpage
+// }
+
+// func (client *Client) BookSeat(seatID string, clientID string) {
+
+// 	//go through all reserved seats
+// 	//update DB of reserved seats to booked
+// 	//send lock release
+
+// }

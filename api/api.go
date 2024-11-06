@@ -14,6 +14,10 @@ type FilePath string
 // mode of a lock
 type LockMode int
 
+//exclusive is write mode - user selects seat: reserves or books seats
+// shared is for viewing seats
+// free is for no lock [tentative]
+
 const (
 	EXCLUSIVE LockMode = iota
 	SHARED
@@ -29,6 +33,9 @@ type InitSessionRequest struct {
 }
 
 type InitSessionResponse struct {
+	LeaseLength time.Duration // Lease length for the session
+	Success     bool          // Whether initialization was successful
+	Error       string        // Any error message from the server
 }
 
 type KeepAliveRequest struct {
@@ -39,9 +46,19 @@ type KeepAliveRequest struct {
 
 type KeepAliveResponse struct {
 	LeaseLength time.Duration
+	Success     bool
 }
 
-// TODO : make all fields exported
+// from nithya & chee kiat - not using this
+// type LockMode struct {
+// 	Type string // either read or write
+// }
+
+// //lock types as a constant
+// const (
+// 	ReadLock  = "read"
+// 	WriteLock = "write"
+// )
 
 type OpenLockRequest struct {
 	ClientID ClientID
