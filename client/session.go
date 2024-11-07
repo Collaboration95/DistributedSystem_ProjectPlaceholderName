@@ -84,6 +84,7 @@ func InitSession(clientID api.ClientID) (*ClientSession, error) {
 	// Find leader by trying to establish a session with any of the
 	// possible server addresses.
 	// Step 2: Attempt to connect to known chubby servers
+	fmt.Printf("lll")
 	for serverAddr := range PossibleServerAddrs {
 		// Try to set up TCP connection to server. - Try to connect to each known server address
 		rpcClient, err := rpc.Dial("tcp", serverAddr)
