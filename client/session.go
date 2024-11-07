@@ -108,7 +108,7 @@ func InitSession(clientID api.ClientID) (*ClientSession, error) {
 		if err != nil {
 			sess.logger.Printf("InitSession with server %s failed with error %s", serverAddr, err.Error())
 		} else {
-			sess.logger.Printf("Session with %s initialized at client", serverAddr)
+			sess.logger.Printf("Session successfully initalized for client: %s initialized at client at %s", sess.clientID, serverAddr)
 
 			// Update session info.
 			sess.serverAddr = serverAddr
@@ -500,11 +500,13 @@ func (sess *ClientSession) IsExpired() bool {
 // SREE DEVI ADDED BELOW 2 FUNCTIONS ON 7 NOV 1231PM
 // ConnectToServer method to establish a connection with a server node
 func (sess *ClientSession) ConnectToServer(serverAddr string) error {
+	log.Printf("Client %s is attempting to connect to server at %s", sess.clientID, serverAddr) // Log client connection attempt
 	client, err := rpc.Dial("tcp", serverAddr)
 	if err != nil {
 		return err
 	}
 	sess.rpcClient = client
+	log.Printf("Client %s successfully connected to server at %s", sess.clientID, serverAddr) // Log successful connection
 	return nil
 }
 
@@ -517,7 +519,11 @@ func StartClient(clientID api.ClientID, serverAddr string) {
 	}
 
 	// Simulate the client trying to acquire a lock
-	success, err := clientSession.TryAcquireLock("file1", api.EXCLUSIVE)
+	log.Printf("Client %s is attempting to acquire lock on file1 with EXCLUSIVE mode", clientID) // Log lock attempt
+	// success, err := clientSession.TryAcquireLock("file1", api.EXCLUSIVE)
+	// success, err := clientSession.TryAcquireLock("file1", api.EXCLUSIVE) //TryAcquireLockUpdated
+	success, err := clientSession.TryAcquireLockUpdated("file1", api.EXCLUSIVE) //TryAcquireLockUpdated
+
 	if err != nil {
 		log.Printf("Error trying to acquire lock: %s", err)
 	} else {
@@ -527,6 +533,7 @@ func StartClient(clientID api.ClientID, serverAddr string) {
 
 // TryAcquireLock method that simulates lock acquisition
 func (sess *ClientSession) TryAcquireLockUpdated(filePath api.FilePath, mode api.LockMode) (bool, error) {
+	log.Printf("Client %s: Sending lock request for file: %s with mode: %d", sess.clientID, filePath, mode) // Log sending request
 	req := &api.TryAcquireLockRequest{
 		FilePath: filePath,
 		Mode:     mode,
@@ -538,6 +545,19 @@ func (sess *ClientSession) TryAcquireLockUpdated(filePath api.FilePath, mode api
 	}
 	return resp.IsSuccessful, nil
 }
+
+// In client/session.go
+func (sess *ClientSession) GetServerAddr() string {
+	return sess.serverAddr
+}
+
+// // Helper function to format lock status
+// func getLockStatus(success bool) string {
+// 	if success {
+// 		return "successful"
+// 	}
+// 	return "failed"
+// }
 
 // --------------------------------------------------------------------------------------------
 // ADDED FUNCTIONS BELOW FROM NITHYA & CHEE KIAT CLIENT SIDE 7 NOV 140AM

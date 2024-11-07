@@ -714,11 +714,79 @@ func (s *Server) TryAcquireLock(req *api.TryAcquireLockRequest, resp *api.TryAcq
 	return nil
 }
 
-// StartServer method to start the server and listen for RPC calls
-func StartServer(address string, serverID int) {
+// // COMMENTED BELOW ON 11PM 7NOV
+// // StartServer method to start the server and listen for RPC calls
+// func StartServer(address string, serverID int) {
+// 	server := &Server{
+// 		locks: make(map[api.FilePath]api.LockMode),
+// 		ID:    serverID,
+// 	}
+
+// 	rpc.Register(server)
+
+// 	listener, err := net.Listen("tcp", address)
+// 	if err != nil {
+// 		log.Fatal("Error starting server:", err)
+// 	}
+
+// 	// Log server start
+// 	fmt.Printf("Server %d started at %s\n", serverID, address)
+
+// 	for {
+// 		conn, err := listener.Accept()
+// 		if err != nil {
+// 			log.Fatal("Error accepting connection:", err)
+// 		}
+// 		go rpc.ServeConn(conn)
+// 	}
+// }
+
+// // ServerManager to handle the servers
+// type ServerManager struct {
+// 	servers []*Server
+// }
+
+// // Initialize and start all servers
+// func (manager *ServerManager) StartServers() {
+// 	var wg sync.WaitGroup
+
+// 	// Start 5 servers on different addresses
+// 	for i := 1; i <= 5; i++ {
+// 		wg.Add(1)
+// 		address := fmt.Sprintf("localhost:%d", 12345+i)
+// 		go func(i int) {
+// 			defer wg.Done()
+// 			StartServer(address, i)
+// 		}(i)
+// 	}
+
+// 	wg.Wait()
+// }
+
+// ServerManager manages multiple servers
+type ServerManager struct {
+	servers []*Server
+}
+
+// StartServers starts multiple servers with different ports
+func (sm *ServerManager) StartServers() {
+	var wg sync.WaitGroup
+	for i := 1; i <= 5; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			port := 12345 + i // Unique port for each server
+			serverAddr := fmt.Sprintf("localhost:%d", port)
+			sm.StartServer(serverAddr)
+		}(i)
+	}
+	wg.Wait()
+}
+
+// StartServer starts a single server to listen for RPC calls
+func (sm *ServerManager) StartServer(address string) {
 	server := &Server{
-		locks: make(map[api.FilePath]api.LockMode),
-		ID:    serverID,
+		locks: make(map[api.FilePath]api.LockMode), // Simulate lock mechanism
 	}
 
 	rpc.Register(server)
@@ -727,10 +795,7 @@ func StartServer(address string, serverID int) {
 	if err != nil {
 		log.Fatal("Error starting server:", err)
 	}
-
-	// Log server start
-	fmt.Printf("Server %d started at %s\n", serverID, address)
-
+	fmt.Println("Server started at", address)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -738,26 +803,4 @@ func StartServer(address string, serverID int) {
 		}
 		go rpc.ServeConn(conn)
 	}
-}
-
-// ServerManager to handle the servers
-type ServerManager struct {
-	servers []*Server
-}
-
-// Initialize and start all servers
-func (manager *ServerManager) StartServers() {
-	var wg sync.WaitGroup
-
-	// Start 5 servers on different addresses
-	for i := 1; i <= 5; i++ {
-		wg.Add(1)
-		address := fmt.Sprintf("localhost:%d", 12345+i)
-		go func(i int) {
-			defer wg.Done()
-			StartServer(address, i)
-		}(i)
-	}
-
-	wg.Wait()
 }

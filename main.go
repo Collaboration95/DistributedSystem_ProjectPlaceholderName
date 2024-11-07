@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/Collaboration95/DistributedSystem_ProjectPlaceholderName.git/api"
@@ -68,7 +69,7 @@ import (
 //	}
 func main() {
 	// serverAddr := "localhost:12345"
-	var wg sync.WaitGroup
+	// var wg sync.WaitGroup
 
 	// // Start the server in a separate goroutine
 	// go func() {
@@ -79,7 +80,7 @@ func main() {
 	serverManager.StartServers()
 
 	// Simulate multiple clients trying to connect to the server  with the highest ID
-	// var wg sync.WaitGroup
+	var wg sync.WaitGroup
 	for i := 1; i <= 5; i++ {
 		wg.Add(1)
 		go func(i int) {
@@ -89,12 +90,30 @@ func main() {
 			// Convert the integer to string and use it as a clientID
 			// clientID := api.ClientID(strconv.Itoa(i)) // Assuming api.ClientID is a type alias for string
 			clientID := api.ClientID(fmt.Sprintf("client-%d", i))
-			serverAddr := fmt.Sprintf("localhost:%d", 12345+5)
+			serverAddr := fmt.Sprintf("localhost:%d", 12350)
+
+			// Log that the client is starting
+			log.Printf("Starting client %s to communicate with server at %s", clientID, serverAddr)
+			// Call InitSession to initialize a session for the client
+			clientSession, err := client.InitSession(clientID)
+			if err != nil {
+				log.Fatalf("Failed to initialize session for client %s: %v", clientID, err)
+			}
+			// Log that the session is successfully initialized
+			log.Printf("Client %s initialized session with server at %s", clientID, clientSession.GetServerAddr())
 			// Start the client with the clientID and server address
-			client.StartClient(clientID, serverAddr)
+			// client.StartClient(clientID, serverAddr)
+			// Once session is initialized, clients can proceed to communicate with the server
+			// Simulate the client trying to acquire a lock after initialization
+			success, err := clientSession.TryAcquireLock("file1", api.EXCLUSIVE)
+			if err != nil {
+				log.Printf("Client %s error trying to acquire lock: %s", clientID, err)
+			} else {
+				fmt.Printf("Client %s lock acquisition successful: %v\n", clientID, success)
+			}
 		}(i)
 	}
-
 	wg.Wait()
 	fmt.Println("All clients have finished their requests.")
+
 }
