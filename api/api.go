@@ -18,9 +18,13 @@ type LockMode int
 // shared is for viewing seats
 // free is for no lock [tentative]
 
+// const (
+// 	EXCLUSIVE LockMode = iota
+// 	SHARED
+// 	FREE
+// )
 const (
 	EXCLUSIVE LockMode = iota
-	SHARED
 	FREE
 )
 
@@ -77,6 +81,7 @@ type DeleteLockResponse struct {
 }
 
 type TryAcquireLockRequest struct {
+	SeatID   string // added this
 	ClientID ClientID
 	FilePath FilePath
 	Mode     LockMode

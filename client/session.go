@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/Collaboration95/DistributedSystem_ProjectPlaceholderName.git/api"
@@ -43,6 +44,8 @@ type ClientSession struct {
 
 	// Logger
 	logger *log.Logger
+
+	mutex sync.Mutex //protects session operations
 }
 
 //seat has 3 status
@@ -397,12 +400,14 @@ func (sess *ClientSession) ReleaseLock(filePath api.FilePath) error {
 		case <-sess.jeopardyChan:
 			sess.logger.Printf("session with %s reestablished", sess.serverAddr)
 		case <-time.After(durationJeopardyOver):
-			return errors.New(fmt.Sprintf("session with %s expired", sess.serverAddr))
+			// return errors.New(fmt.Sprintf("session with %s expired", sess.serverAddr))
+			return fmt.Errorf("session with %s expired", sess.serverAddr)
 		}
 	}
 	_, ok := sess.locks[filePath]
 	if !ok {
-		return errors.New(fmt.Sprintf("Client does not own the lock %s", filePath))
+		//return errors.New(fmt.Sprintf("Client does not own the lock %s", filePath))
+		return fmt.Errorf("Client does not own the lock %s", filePath)
 	}
 
 	//sess.logger.Printf("Sending ReleaseLock request to server %s", sess.serverAddr)
@@ -568,6 +573,7 @@ func (sess *ClientSession) IsExpired() bool {
 // }
 
 // func (client *Client) BookSeat(seatID string, clientID string) {
+// 	client.mutex.Lock()
 
 // 	//go through all reserved seats
 // 	//update DB of reserved seats to booked

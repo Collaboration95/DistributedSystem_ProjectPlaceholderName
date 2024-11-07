@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/rpc"
 	"sync"
 	"time"
 
@@ -29,6 +31,8 @@ type Session struct {
 	// Length of the Lease
 	leaseLength time.Duration
 
+	rpcClient *rpc.Client //use rpc package to establish session server connection
+
 	// TTL Lock
 	ttlLock sync.Mutex
 
@@ -44,12 +48,13 @@ type Session struct {
 
 	// terminated channel
 	terminatedChan chan struct{}
+	mutex          sync.Mutex // protext session operations
 }
 
 // lock describes information about a particular chubby lock
 type Lock struct {
 	path    api.FilePath          // path to this lock in the store
-	mode    api.LockMode          // api.SHARED or exclusive lock?
+	mode    api.LockMode          // api.FREE or exclusive lock?
 	owners  map[api.ClientID]bool // who is holding the lock?
 	content string                // the content of the file
 
@@ -158,46 +163,49 @@ func (sess *Session) KeepAlive(clientID api.ClientID) time.Duration {
 
 }
 
-// create the lock if it does not exist
-func (sess *Session) OpenLock(path api.FilePath) error {
-	// check if lock exists in persistent store
-	_, err := app.store.Get(string(path))
-	if err != nil {
-		// Add lock to persistent store: (key: LockPath, value: "")
-		err = app.store.Set(string(path), "")
-		if err != nil {
-			return err
-		}
-		// add lock to in-memory struct of locks
-		lock := &Lock{
-			path:    path,
-			mode:    api.FREE,
-			owners:  make(map[api.ClientID]bool),
-			content: "",
-		}
-		app.locks[path] = lock
-		sess.locks[path] = lock
-	}
-	return nil
-}
+// // create the lock if it does not exist
+// func (sess *Session) OpenLock(path api.FilePath) error {
+// 	// check if lock exists in persistent store
+// 	_, err := app.store.Get(string(path))
+// 	if err != nil {
+// 		// Add lock to persistent store: (key: LockPath, value: "")
+// 		err = app.store.Set(string(path), "")
+// 		if err != nil {
+// 			return err
+// 		}
+// 		// add lock to in-memory struct of locks
+// 		lock := &Lock{
+// 			path:    path,
+// 			mode:    api.FREE,
+// 			owners:  make(map[api.ClientID]bool),
+// 			content: "",
+// 		}
+// 		app.locks[path] = lock
+// 		sess.locks[path] = lock
+// 	}
+// 	return nil
+// }
 
 // delete the lock. lock must be held in exclusive mode before calling DeleteLock
 func (sess *Session) DeleteLock(path api.FilePath) error {
 	// If we are not holding the lock, we cannot delete it.
 	lock, exists := sess.locks[path]
 	if !exists {
-		return errors.New(fmt.Sprintf("Client does not hold the lock at path %s", path))
+		//return errors.New(fmt.Sprintf("Client does not hold the lock at path %s", path))
+		return fmt.Errorf("client does not hold the lock at path %s", path)
 	}
 	// check if we are holding the lock in exclusive mode
 	if lock.mode != api.EXCLUSIVE {
-		return errors.New(fmt.Sprintf("Client does not hold the lock at path %s in exclusive mode", path))
+		// return errors.New(fmt.Sprintf("Client does not hold the lock at path %s in exclusive mode", path))
+		return fmt.Errorf("client does not hold the lock at path %s in exclusive mode", path)
 	}
 
 	// check that the lock actually exists in the store
 	_, err := app.store.Get(string(path))
 
 	if err != nil {
-		return errors.New(fmt.Sprintf("Lock at %s does not exist in persistent store", path))
+		// return errors.New(fmt.Sprintf("Lock at %s does not exist in persistent store", path))
+		return fmt.Errorf("Lock at %s does not exist in persistent store", path)
 
 	}
 	// delete the lock from session metadata
@@ -212,29 +220,129 @@ func (sess *Session) DeleteLock(path api.FilePath) error {
 
 }
 
+// try to reserve a seat for the client (when user clicks on seat)
 // try to acquire lock, returning either success (true) or failure (false)
-func (sess *Session) TryAcquireLock(path api.FilePath, mode api.LockMode) (bool, error) {
-	// validate mode of the lock
-	if mode != api.EXCLUSIVE && mode != api.SHARED {
-		return false, errors.New(fmt.Sprintf("Invalid mode."))
+// func (sess *Session) TryAcquireLock(seatID string, path api.FilePath, mode api.LockMode) (bool, error) {
+// 	args := api.TryAcquireLockRequest{SeatID: seatID, ClientID: sess.clientID}
+
+// 	// // validate mode of the lock
+// 	// if mode != api.EXCLUSIVE && mode != api.SHARED {
+// 	// 	return false, errors.New(fmt.Sprintf("Invalid mode."))
+// 	// }
+
+// 	// do we already own the lock? fail with error
+
+// 	// check if lock exists in persistent store
+// 	_, err := app.store.Get(string(path))
+
+// 	if err != nil {
+// 		return false, errors.New(fmt.Sprintf("Lock at %s has not been opened", path))
+// 	}
+
+// 	// check if lock exists in in-mem struct
+// 	lock, exists := app.locks[path]
+// 	if !exists {
+// 		// assume some failure has occured
+// 		// recover lock struct: add lock to in-memory struct of locks
+// 		app.logger.Printf("Lock does not exist wuth Client ID", sess.clientID)
+
+// 		lock = &Lock{
+// 			path:    path,
+// 			mode:    api.FREE,
+// 			owners:  make(map[api.ClientID]bool),
+// 			content: "",
+// 		}
+// 		app.locks[path] = lock
+// 		sess.locks[path] = lock
+// 	}
+
+// 	// check the mode of the lock
+// 	switch lock.mode {
+// 	case api.EXCLUSIVE:
+// 		// should fail: someone probably already owns the lock
+// 		if len(lock.owners) == 0 {
+// 			// throw an error if there are no owners but lock.mode is api.EXCLUSIVE:
+// 			// this means ReleaseLock was not implemented correctly
+// 			return false, errors.New("Lock has EXCLUSIVE mode despite having no owners")
+
+// 		} else if len(lock.owners) > 1 {
+// 			return false, errors.New("Lock has EXCLUSIVE mode despite having multiple owners")
+// 		} else {
+// 			// fail with no error
+// 			app.logger.Printf("Failed to acquire lock %s: already held in EXCLUSIVE mode", path)
+// 			return false, nil
+// 		}
+
+// 	// case api.SHARED:
+// 	// 	// IF MODE IS api.SHARED, then succeed; else fail
+// 	// 	if mode == api.EXCLUSIVE {
+// 	// 		app.logger.Printf("Failed to acquire lock %s in EXCLUSIVE mode: already held in SHARED mode", path)
+// 	// 		return false, nil
+// 	// 	} else { // mode == api.SHARED
+// 	// 		// update lock owners
+// 	// 		lock.owners[sess.clientID] = true
+
+// 	// 		// add lock to session lock struct
+// 	// 		sess.locks[path] = lock
+// 	// 		sess.locks[path] = lock
+// 	// 		// return success
+// 	// 		// app.logger.Printf("Lock %s acquired successfully with mode SHARED", path)
+// 	// 		return true, nil
+// 	// 	}
+// 	case api.FREE:
+// 		// if lock has owners, either TryAcquireLock or ReleaseLock was not implemented correctly
+// 		if len(lock.owners) > 0 {
+// 			return false, errors.New("Lock has FREE mode but is owned by 1 or more clients")
+
+// 		}
+// 		// should succeed regardless of mode
+// 		// update lock owners
+// 		lock.owners[sess.clientID] = true
+
+// 		// update lock mode
+// 		lock.mode = mode
+
+// 		// add lock to session lock struct
+// 		sess.locks[path] = lock
+
+// 		// update lock mode in the global map
+// 		app.locks[path] = lock
+
+// 		// Return success
+// 		//if mode == api.SHARED {
+// 		//	app.logger.Printf("Lock %s acquired successfully with mode SHARED", path)
+// 		//} else {
+// 		//	app.logger.Printf("Lock %s acquired successfully with mode EXCLUSIVE", path)
+// 		//}
+
+//			return true, nil
+//		default:
+//			return false, errors.New(fmt.Sprintf("Lock at %s has undefined mode %d", path, lock.mode))
+//		}
+//	}
+//
+// TryAcquireLock tries to reserve a seat for the client (when user clicks on seat)
+// and attempts to acquire a lock, returning success (true) or failure (false).
+func (sess *Session) TryAcquireLock(seatID string, path api.FilePath, mode api.LockMode) (bool, error) {
+	args := api.TryAcquireLockRequest{SeatID: seatID, ClientID: sess.clientID, FilePath: path, Mode: mode}
+
+	// Validate lock mode
+	if mode != api.EXCLUSIVE && mode != api.FREE {
+		return false, errors.New("invalid lock mode")
 	}
 
-	// do we already own the lock? fail with error
-
-	// check if lock exists in persistent store
+	// Check if the lock exists in persistent storage
 	_, err := app.store.Get(string(path))
-
 	if err != nil {
-		return false, errors.New(fmt.Sprintf("Lock at %s has not been opened", path))
+		// return false, errors.New(fmt.Sprintf("Lock at %s has not been opened", path))
+		return false, fmt.Errorf("Lock at %s has not been opened", path)
 	}
 
-	// check if lock exists in in-mem struct
+	// Check if lock exists in the in-memory struct
 	lock, exists := app.locks[path]
 	if !exists {
-		// assume some failure has occured
-		// recover lock struct: add lock to in-memory struct of locks
-		app.logger.Printf("Lock does not exist wuth Client ID", sess.clientID)
-
+		// Recover lock struct by adding it to in-memory locks
+		app.logger.Printf("Lock does not exist for Client ID %s", sess.clientID)
 		lock = &Lock{
 			path:    path,
 			mode:    api.FREE,
@@ -245,70 +353,51 @@ func (sess *Session) TryAcquireLock(path api.FilePath, mode api.LockMode) (bool,
 		sess.locks[path] = lock
 	}
 
-	// check the mode of the lock
+	// Check the mode of the lock
 	switch lock.mode {
 	case api.EXCLUSIVE:
-		// should fail: someone probably already owns the lock
-		if len(lock.owners) == 0 {
-			// throw an error if there are no owners but lock.mode is api.EXCLUSIVE:
-			// this means ReleaseLock was not implemented correctly
-			return false, errors.New("Lock has EXCLUSIVE mode despite having no owners")
-
-		} else if len(lock.owners) > 1 {
-			return false, errors.New("Lock has EXCLUSIVE mode despite having multiple owners")
-		} else {
-			// fail with no error
+		// Fail if someone already owns the lock exclusively
+		if len(lock.owners) > 0 {
 			app.logger.Printf("Failed to acquire lock %s: already held in EXCLUSIVE mode", path)
 			return false, nil
 		}
 
-	case api.SHARED:
-		// IF MODE IS api.SHARED, then succeed; else fail
-		if mode == api.EXCLUSIVE {
-			app.logger.Printf("Failed to acquire lock %s in EXCLUSIVE mode: already held in SHARED mode", path)
-			return false, nil
-		} else { // mode == api.SHARED
-			// update lock owners
-			lock.owners[sess.clientID] = true
-
-			// add lock to session lock struct
-			sess.locks[path] = lock
-			sess.locks[path] = lock
-			// return success
-			// app.logger.Printf("Lock %s acquired successfully with mode SHARED", path)
-			return true, nil
-		}
 	case api.FREE:
-		// if lock has owners, either TryAcquireLock or ReleaseLock was not implemented correctly
-		if len(lock.owners) > 0 {
-			return false, errors.New("Lock has FREE mode but is owned by 1 or more clients")
-
-		}
-		// should succeed regardless of mode
-		// update lock owners
+		// Grant the lock exclusively if in FREE mode
 		lock.owners[sess.clientID] = true
-
-		// update lock mode
-		lock.mode = mode
-
-		// add lock to session lock struct
+		lock.mode = api.EXCLUSIVE
 		sess.locks[path] = lock
-
-		// update lock mode in the global map
 		app.locks[path] = lock
 
-		// Return success
-		//if mode == api.SHARED {
-		//	app.logger.Printf("Lock %s acquired successfully with mode SHARED", path)
-		//} else {
-		//	app.logger.Printf("Lock %s acquired successfully with mode EXCLUSIVE", path)
-		//}
+		app.logger.Printf("Lock %s acquired successfully in EXCLUSIVE mode", path)
+		// Now perform the RPC call to inform the server of the acquired lock
+		resp := new(api.TryAcquireLockResponse)
+		err = sess.rpcClient.Call("server.Handler.TryAcquireLock", args, resp)
+		if err != nil {
+			// If the RPC call fails, return false and the error
+			return false, fmt.Errorf("RPC call failed to inform server: %v", err)
+		}
 
+		// If the RPC call was successful and the lock is acquired, return true
+		if resp.IsSuccessful {
+			return true, nil
+		} else {
+			// If the server indicates failure, rollback the local lock acquisition
+			lock.owners[sess.clientID] = false
+			lock.mode = api.FREE
+			sess.locks[path] = lock
+			app.locks[path] = lock
+
+			return false, errors.New("Server failed to confirm lock acquisition")
+		}
 		return true, nil
+
 	default:
 		return false, errors.New(fmt.Sprintf("Lock at %s has undefined mode %d", path, lock.mode))
 	}
-}
+	// If none of the cases matched, return false (this is a safe fallback)
+	return false, nil
+} // TODO FIX THIS
 
 // RELEASE THE LOCK
 func (sess *Session) ReleaseLock(path api.FilePath) error {
@@ -345,21 +434,21 @@ func (sess *Session) ReleaseLock(path api.FilePath) error {
 		log.Printf("Release lock at %s\n", path)
 		// return without error
 		return nil
-	case api.SHARED:
-		// delete from lock owners
-		delete(lock.owners, sess.clientID)
+	// case api.SHARED:
+	// 	// delete from lock owners
+	// 	delete(lock.owners, sess.clientID)
 
-		// set lock mode if no more owners
-		if len(lock.owners) == 0 {
-			lock.mode = api.FREE
-		}
+	// 	// set lock mode if no more owners
+	// 	if len(lock.owners) == 0 {
+	// 		lock.mode = api.FREE
+	// 	}
 
-		// delete lock from session locks map
-		delete(sess.locks, path)
-		app.locks[path] = lock
+	// 	// delete lock from session locks map
+	// 	delete(sess.locks, path)
+	// 	app.locks[path] = lock
 
-		// return without error
-		return nil
+	// 	// return without error
+	// 	return nil
 	default:
 		return errors.New(fmt.Sprintf("Lock at %s has undefined mode %d", path, lock.mode))
 
@@ -420,4 +509,174 @@ func (sess *Session) WriteContent(path api.FilePath, content string) error {
 	}
 	return nil
 
+}
+
+// BELOW FUNCTIONS FROM NOVAN INTERMEDIATE BRANCH
+// --------------------------------------------------------------------------
+// ChubbyNode represents a single server in the Chubby cell
+type ChubbyNode struct {
+	isLeader  bool
+	Seats     map[string]api.LockMode // Mapping of seat IDs to their lock status
+	locks     map[string]string       // Maps seat IDs to the client who holds the lock
+	lockLimit int                     // Maximum locks allowed per client
+	mutex     sync.Mutex
+	clients   map[string]time.Time // Tracks last active time for clients
+}
+
+// NewChubbyNode initializes a new ChubbyNode
+func NewChubbyNode(isLeader bool) *ChubbyNode {
+	node := &ChubbyNode{
+		isLeader:  isLeader,
+		Seats:     make(map[string]api.LockMode),
+		locks:     make(map[string]string),
+		lockLimit: 5,                          // Limit clients to 5 simultaneous locks
+		clients:   make(map[string]time.Time), // Initialize client tracking
+	}
+	// Initialize 50 seats
+	for i := 1; i <= 50; i++ {
+		node.Seats[fmt.Sprintf("seat-%d", i)] = api.FREE
+	}
+	return node
+}
+
+// RequestLock handles lock requests from clients tries to reserve a seat for client
+func (node *ChubbyNode) RequestLock(args api.TryAcquireLockRequest, reply *api.TryAcquireLockResponse) error {
+	node.mutex.Lock()
+	defer node.mutex.Unlock()
+
+	seatID := args.SeatID
+	clientID := args.ClientID
+
+	// Check if the seat is already reserved or booked (in exclusive mode)
+	if currentStatus, exists := node.Seats[seatID]; exists && currentStatus == api.EXCLUSIVE {
+		reply.IsSuccessful = false
+		//reply.Message = fmt.Sprintf("%s is already booked or unavailable", seatID)
+		return nil
+	}
+
+	// // Check if seat is reserved by another client
+	// if lockHolder, exists := node.locks[seatID]; exists && lockHolder != clientID {
+	// 	reply.Success = false
+	// 	reply.Message = fmt.Sprintf("%s is already reserved by another client", seatID)
+	// 	return nil
+	// }
+
+	// Reserve the seat and assign lock to the client
+	node.Seats[seatID] = api.EXCLUSIVE
+	node.locks[seatID] = string(clientID) // TODO FIX THIS
+	reply.IsSuccessful = true
+	//reply.Message = fmt.Sprintf("%s reserved successfully", seatID)
+	return nil
+}
+
+// BookSeat confirms the reservation by marking a seat as booked
+func (node *ChubbyNode) BookSeat(args *api.TryAcquireLockRequest, reply *api.TryAcquireLockResponse) error {
+	node.mutex.Lock()
+	defer node.mutex.Unlock()
+
+	seatID := args.SeatID
+	clientID := args.ClientID
+
+	// // Ensure the seat is currently reserved by the requesting client
+	// if currentStatus, exists := node.Seats[seatID]; !exists || currentStatus != Reserved || node.locks[seatID] != clientID {
+	// 	reply.IsSuccessful = false
+	// 	//reply.Message = fmt.Sprintf("%s is not reserved by you or is unavailable", seatID)
+	// 	return nil
+	// }
+
+	// Ensure the seat is currently reserved by the requesting client
+	if currentStatus, exists := node.Seats[seatID]; !exists || currentStatus != api.EXCLUSIVE || node.locks[seatID] != string(clientID) {
+		reply.IsSuccessful = false
+		return nil
+	}
+
+	// Book the seat
+	node.Seats[seatID] = api.EXCLUSIVE
+	delete(node.locks, seatID)
+	reply.IsSuccessful = true
+	//reply.Message = fmt.Sprintf("%s booked successfully", seatID)
+	return nil
+}
+
+// ReleaseLock releases a lock on a seat if it's in an exclusive state
+func (node *ChubbyNode) ReleaseLock(args api.TryAcquireLockRequest, reply api.TryAcquireLockResponse) error {
+	node.mutex.Lock()
+	defer node.mutex.Unlock()
+
+	seatID := args.SeatID
+	clientID := args.ClientID
+
+	// // Ensure the seat is currently reserved by the requesting client
+	// if currentStatus, exists := node.Seats[seatID]; !exists || currentStatus != Reserved || node.locks[seatID] != clientID {
+	// 	reply.Success = false
+	// 	reply.Message = fmt.Sprintf("%s is not reserved by you or is unavailable", seatID)
+	// 	return nil
+	// }
+
+	// Ensure the seat is currently reserved by the requesting client
+	if lockHolder, exists := node.locks[seatID]; !exists || lockHolder != string(clientID) {
+		reply.IsSuccessful = false
+		return nil
+	}
+
+	// Release the lock and set the seat to FREE mode
+	node.Seats[seatID] = api.FREE
+	delete(node.locks, seatID)
+	reply.IsSuccessful = true
+	//reply.Message = fmt.Sprintf("%s lock released", seatID)
+	return nil
+}
+
+// // KeepAlive handles keep-alive requests from clients
+// func (node *ChubbyNode) KeepAlive(args KeepAliveArgs, reply *KeepAliveResponse) error {
+// 	node.mutex.Lock()
+// 	defer node.mutex.Unlock()
+
+// 	// Update the last active time for the client
+// 	node.clients[args.ClientID] = time.Now()
+// 	reply.Success = true
+// 	reply.Message = "Keep-alive acknowledged"
+// 	return nil
+// }
+
+// StartServer initializes and runs the Chubby server on the specified port
+func StartServer(port string, isLeader bool) error {
+	node := NewChubbyNode(isLeader)
+
+	rpc.Register(node)
+	listener, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		return fmt.Errorf("failed to start server on port %s: %v", port, err)
+	}
+	defer listener.Close()
+
+	log.Printf("ChubbyNode started on port %s (Leader: %v)", port, isLeader)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("connection accept error: %v", err)
+			continue
+		}
+		go rpc.ServeConn(conn)
+	}
+}
+
+func main() {
+	// Start 5 nodes with one leader
+	var wg sync.WaitGroup
+	ports := []string{"8000", "8001", "8002", "8003", "8004"}
+
+	for i, port := range ports {
+		wg.Add(1)
+		isLeader := i == 0 // First node is the leader
+		go func(port string, isLeader bool) {
+			defer wg.Done()
+			if err := StartServer(port, isLeader); err != nil {
+				log.Fatalf("Server failed on port %s: %v", port, err)
+			}
+		}(port, isLeader)
+	}
+
+	wg.Wait()
 }
