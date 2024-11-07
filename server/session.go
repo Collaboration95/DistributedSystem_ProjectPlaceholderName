@@ -651,44 +651,86 @@ func (node *ChubbyNode) ReleaseLock(args api.TryAcquireLockRequest, reply api.Tr
 // 	return nil
 // }
 
-// StartServer initializes and runs the Chubby server on the specified port
-func StartServer(port string, isLeader bool) error {
-	node := NewChubbyNode(isLeader)
+// // StartServer initializes and runs the Chubby server on the specified port
+// func StartServer(port string, isLeader bool) error {
+// 	node := NewChubbyNode(isLeader)
 
-	rpc.Register(node)
-	listener, err := net.Listen("tcp", ":"+port)
-	if err != nil {
-		return fmt.Errorf("failed to start server on port %s: %v", port, err)
+// 	rpc.Register(node)
+// 	listener, err := net.Listen("tcp", ":"+port)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to start server on port %s: %v", port, err)
+// 	}
+// 	defer listener.Close()
+
+// 	log.Printf("ChubbyNode started on port %s (Leader: %v)", port, isLeader)
+
+// 	for {
+// 		conn, err := listener.Accept()
+// 		if err != nil {
+// 			log.Printf("connection accept error: %v", err)
+// 			continue
+// 		}
+// 		go rpc.ServeConn(conn)
+// 	}
+// }
+
+// func main() {
+// 	// Start 5 nodes with one leader
+// 	var wg sync.WaitGroup
+// 	ports := []string{"8000", "8001", "8002", "8003", "8004"}
+
+// 	for i, port := range ports {
+// 		wg.Add(1)
+// 		isLeader := i == 0 // First node is the leader
+// 		go func(port string, isLeader bool) {
+// 			defer wg.Done()
+// 			if err := StartServer(port, isLeader); err != nil {
+// 				log.Fatalf("Server failed on port %s: %v", port, err)
+// 			}
+// 		}(port, isLeader)
+// 	}
+
+// 	wg.Wait()
+// }
+
+// SREE DEVI ADDED 7 NOV 1230 PM
+// Server struct representing the server
+type Server struct {
+	locks map[api.FilePath]api.LockMode
+}
+
+// TryAcquireLock method that handles client lock acquisition requests
+func (s *Server) TryAcquireLock(req *api.TryAcquireLockRequest, resp *api.TryAcquireLockResponse) error {
+	// Simulate lock acquisition logic
+	if s.locks[req.FilePath] == api.EXCLUSIVE {
+		resp.IsSuccessful = false
+		return nil
 	}
-	defer listener.Close()
 
-	log.Printf("ChubbyNode started on port %s (Leader: %v)", port, isLeader)
+	s.locks[req.FilePath] = req.Mode
+	resp.IsSuccessful = true
+	return nil
+}
 
+// StartServer method to start the server and listen for RPC calls
+func StartServer(address string) {
+	server := &Server{
+		locks: make(map[api.FilePath]api.LockMode),
+	}
+
+	rpc.Register(server)
+
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Fatal("Error starting server:", err)
+	}
+
+	fmt.Println("Server started at", address)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Printf("connection accept error: %v", err)
-			continue
+			log.Fatal("Error accepting connection:", err)
 		}
 		go rpc.ServeConn(conn)
 	}
-}
-
-func main() {
-	// Start 5 nodes with one leader
-	var wg sync.WaitGroup
-	ports := []string{"8000", "8001", "8002", "8003", "8004"}
-
-	for i, port := range ports {
-		wg.Add(1)
-		isLeader := i == 0 // First node is the leader
-		go func(port string, isLeader bool) {
-			defer wg.Done()
-			if err := StartServer(port, isLeader); err != nil {
-				log.Fatalf("Server failed on port %s: %v", port, err)
-			}
-		}(port, isLeader)
-	}
-
-	wg.Wait()
 }

@@ -46,6 +46,7 @@ type ClientSession struct {
 	logger *log.Logger
 
 	mutex sync.Mutex //protects session operations
+
 }
 
 //seat has 3 status
@@ -494,6 +495,34 @@ func (sess *ClientSession) WriteContent(filePath api.FilePath, content string) (
 
 func (sess *ClientSession) IsExpired() bool {
 	return sess.expired
+}
+
+// SREE DEVI ADDED BELOW 2 FUNCTIONS ON 7 NOV 1231PM
+// ConnectToServer method to establish a connection with a server node
+func (sess *ClientSession) ConnectToServer(serverAddr string) error {
+	client, err := rpc.Dial("tcp", serverAddr)
+	if err != nil {
+		return err
+	}
+	sess.rpcClient = client
+	return nil
+}
+
+// StartClient method to simulate client operations
+func StartClient(clientID api.ClientID, serverAddr string) {
+	clientSession := &ClientSession{clientID: clientID}
+	err := clientSession.ConnectToServer(serverAddr)
+	if err != nil {
+		log.Fatalf("Error connecting to server: %s", err)
+	}
+
+	// Simulate the client trying to acquire a lock
+	success, err := clientSession.TryAcquireLock("file1", api.EXCLUSIVE)
+	if err != nil {
+		log.Printf("Error trying to acquire lock: %s", err)
+	} else {
+		fmt.Printf("Lock acquisition successful: %v\n", success)
+	}
 }
 
 // --------------------------------------------------------------------------------------------
