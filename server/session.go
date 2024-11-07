@@ -777,6 +777,7 @@ func (sm *ServerManager) StartServers() {
 			defer wg.Done()
 			port := 12345 + i // Unique port for each server
 			serverAddr := fmt.Sprintf("localhost:%d", port)
+			// serverAddr := string(port)
 			sm.StartServer(serverAddr)
 		}(i)
 	}
@@ -796,6 +797,30 @@ func (sm *ServerManager) StartServer(address string) {
 		log.Fatal("Error starting server:", err)
 	}
 	fmt.Println("Server started at", address)
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Fatal("Error accepting connection:", err)
+		}
+		go rpc.ServeConn(conn)
+	}
+}
+
+// StartServer method to start the server and listen for RPC calls
+func (s *Server) StartServer(address string) {
+	// Register the server methods to handle RPC requests
+	rpc.Register(s)
+
+	// Start listening for incoming connections
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Fatal("Error starting server:", err)
+	}
+
+	// Log server start
+	fmt.Printf("Server %d started at %s\n", s.ID, address)
+
+	// Accept and serve incoming client connections
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
