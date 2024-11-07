@@ -697,6 +697,8 @@ func (node *ChubbyNode) ReleaseLock(args api.TryAcquireLockRequest, reply api.Tr
 // Server struct representing the server
 type Server struct {
 	locks map[api.FilePath]api.LockMode
+	ID    int        // Add ID for each server
+	mu    sync.Mutex // Mutex for thread safety when acquiring lock
 }
 
 // TryAcquireLock method that handles client lock acquisition requests
@@ -713,9 +715,10 @@ func (s *Server) TryAcquireLock(req *api.TryAcquireLockRequest, resp *api.TryAcq
 }
 
 // StartServer method to start the server and listen for RPC calls
-func StartServer(address string) {
+func StartServer(address string, serverID int) {
 	server := &Server{
 		locks: make(map[api.FilePath]api.LockMode),
+		ID:    serverID,
 	}
 
 	rpc.Register(server)
@@ -725,7 +728,9 @@ func StartServer(address string) {
 		log.Fatal("Error starting server:", err)
 	}
 
-	fmt.Println("Server started at", address)
+	// Log server start
+	fmt.Printf("Server %d started at %s\n", serverID, address)
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -733,4 +738,26 @@ func StartServer(address string) {
 		}
 		go rpc.ServeConn(conn)
 	}
+}
+
+// ServerManager to handle the servers
+type ServerManager struct {
+	servers []*Server
+}
+
+// Initialize and start all servers
+func (manager *ServerManager) StartServers() {
+	var wg sync.WaitGroup
+
+	// Start 5 servers on different addresses
+	for i := 1; i <= 5; i++ {
+		wg.Add(1)
+		address := fmt.Sprintf("localhost:%d", 12345+i)
+		go func(i int) {
+			defer wg.Done()
+			StartServer(address, i)
+		}(i)
+	}
+
+	wg.Wait()
 }

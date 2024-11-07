@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strconv"
 	"sync"
 
 	"github.com/Collaboration95/DistributedSystem_ProjectPlaceholderName.git/api"
@@ -68,23 +67,29 @@ import (
 //		fmt.Println("All clients have finished their requests.")
 //	}
 func main() {
-	serverAddr := "localhost:12345"
-
-	// Start the server in a separate goroutine
-	go func() {
-		server.StartServer(serverAddr)
-	}()
-
-	// Simulate multiple clients trying to connect to the server
+	// serverAddr := "localhost:12345"
 	var wg sync.WaitGroup
+
+	// // Start the server in a separate goroutine
+	// go func() {
+	// 	server.StartServer(serverAddr)
+	// }()
+	// Start 5 servers with different IDs
+	serverManager := &server.ServerManager{}
+	serverManager.StartServers()
+
+	// Simulate multiple clients trying to connect to the server  with the highest ID
+	// var wg sync.WaitGroup
 	for i := 1; i <= 5; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 
+			// Find the highest server address (server with ID 5)
 			// Convert the integer to string and use it as a clientID
-			clientID := api.ClientID(strconv.Itoa(i)) // Assuming api.ClientID is a type alias for string
-
+			// clientID := api.ClientID(strconv.Itoa(i)) // Assuming api.ClientID is a type alias for string
+			clientID := api.ClientID(fmt.Sprintf("client-%d", i))
+			serverAddr := fmt.Sprintf("localhost:%d", 12345+5)
 			// Start the client with the clientID and server address
 			client.StartClient(clientID, serverAddr)
 		}(i)

@@ -525,6 +525,20 @@ func StartClient(clientID api.ClientID, serverAddr string) {
 	}
 }
 
+// TryAcquireLock method that simulates lock acquisition
+func (sess *ClientSession) TryAcquireLockUpdated(filePath api.FilePath, mode api.LockMode) (bool, error) {
+	req := &api.TryAcquireLockRequest{
+		FilePath: filePath,
+		Mode:     mode,
+	}
+	resp := &api.TryAcquireLockResponse{}
+	err := sess.rpcClient.Call("Server.TryAcquireLock", req, resp)
+	if err != nil {
+		return false, err
+	}
+	return resp.IsSuccessful, nil
+}
+
 // --------------------------------------------------------------------------------------------
 // ADDED FUNCTIONS BELOW FROM NITHYA & CHEE KIAT CLIENT SIDE 7 NOV 140AM
 // TODO MODIFY SYNTAX SO THAT THE FUNCTIONS BELOW CAN BE USED OR UPDATE CORRESPONDING FUNCTIONS ABOVE
