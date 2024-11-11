@@ -54,7 +54,7 @@ type Session struct {
 // lock describes information about a particular chubby lock
 type Lock struct {
 	path    api.FilePath          // path to this lock in the store
-	mode    api.LockMode          // api.FREE or exclusive lock?
+	mode    api.LockMode          // api.FREE OR RESERVED OR BOOKED
 	owners  map[api.ClientID]bool // who is holding the lock?
 	content string                // the content of the file
 
@@ -195,7 +195,7 @@ func (sess *Session) DeleteLock(path api.FilePath) error {
 		return fmt.Errorf("client does not hold the lock at path %s", path)
 	}
 	// check if we are holding the lock in exclusive mode
-	if lock.mode != api.EXCLUSIVE {
+	if lock.mode != api.RESERVED {
 		// return errors.New(fmt.Sprintf("Client does not hold the lock at path %s in exclusive mode", path))
 		return fmt.Errorf("client does not hold the lock at path %s in exclusive mode", path)
 	}
@@ -327,7 +327,7 @@ func (sess *Session) TryAcquireLock(seatID string, path api.FilePath, mode api.L
 	args := api.TryAcquireLockRequest{SeatID: seatID, ClientID: sess.clientID, FilePath: path, Mode: mode}
 
 	// Validate lock mode
-	if mode != api.EXCLUSIVE && mode != api.FREE {
+	if mode != api.RESERVED && mode != api.FREE && mode != api.BOOKED {
 		return false, errors.New("invalid lock mode")
 	}
 
@@ -355,17 +355,17 @@ func (sess *Session) TryAcquireLock(seatID string, path api.FilePath, mode api.L
 
 	// Check the mode of the lock
 	switch lock.mode {
-	case api.EXCLUSIVE:
+	case api.RESERVED:
 		// Fail if someone already owns the lock exclusively
 		if len(lock.owners) > 0 {
-			app.logger.Printf("Failed to acquire lock %s: already held in EXCLUSIVE mode", path)
+			app.logger.Printf("Failed to acquire lock %s: already held in RESERVED mode", path)
 			return false, nil
 		}
 
 	case api.FREE:
 		// Grant the lock exclusively if in FREE mode
 		lock.owners[sess.clientID] = true
-		lock.mode = api.EXCLUSIVE
+		lock.mode = api.RESERVED
 		sess.locks[path] = lock
 		app.locks[path] = lock
 
@@ -425,7 +425,7 @@ func (sess *Session) ReleaseLock(path api.FilePath) error {
 		// throw an error: this means TryAcquire was not implemented correctly
 		// return errors.New(fmt.Sprint("Lock at %s has FREE mode: acquire not implemented correctly Client ID %s", path, sess.clientID))
 		return fmt.Errorf("Lock at %s has FREE mode: acquire not implemented correctly Client ID %s", path, sess.clientID)
-	case api.EXCLUSIVE:
+	case api.BOOKED:
 		// delete lock from owners
 		delete(lock.owners, sess.clientID)
 
@@ -438,6 +438,7 @@ func (sess *Session) ReleaseLock(path api.FilePath) error {
 		log.Printf("Release lock at %s\n", path)
 		// return without error
 		return nil
+		// TODO ADD CASE FOR RESERVED
 	// case api.SHARED:
 	// 	// delete from lock owners
 	// 	delete(lock.owners, sess.clientID)
@@ -560,7 +561,7 @@ func (node *ChubbyNode) RequestLock(args api.TryAcquireLockRequest, reply *api.T
 	clientID := args.ClientID
 
 	// Check if the seat is already reserved or booked (in exclusive mode)
-	if currentStatus, exists := node.Seats[seatID]; exists && currentStatus == api.EXCLUSIVE {
+	if currentStatus, exists := node.Seats[seatID]; exists && currentStatus == api.RESERVED {
 		reply.IsSuccessful = false
 		//reply.Message = fmt.Sprintf("%s is already booked or unavailable", seatID)
 		return nil
@@ -574,7 +575,7 @@ func (node *ChubbyNode) RequestLock(args api.TryAcquireLockRequest, reply *api.T
 	// }
 
 	// Reserve the seat and assign lock to the client
-	node.Seats[seatID] = api.EXCLUSIVE
+	node.Seats[seatID] = api.RESERVED
 	node.locks[seatID] = string(clientID) // TODO FIX THIS
 	reply.IsSuccessful = true
 	//reply.Message = fmt.Sprintf("%s reserved successfully", seatID)
@@ -597,13 +598,13 @@ func (node *ChubbyNode) BookSeat(args *api.TryAcquireLockRequest, reply *api.Try
 	// }
 
 	// Ensure the seat is currently reserved by the requesting client
-	if currentStatus, exists := node.Seats[seatID]; !exists || currentStatus != api.EXCLUSIVE || node.locks[seatID] != string(clientID) {
+	if currentStatus, exists := node.Seats[seatID]; !exists || currentStatus != api.RESERVED || node.locks[seatID] != string(clientID) {
 		reply.IsSuccessful = false
 		return nil
 	}
 
 	// Book the seat
-	node.Seats[seatID] = api.EXCLUSIVE
+	node.Seats[seatID] = api.BOOKED
 	delete(node.locks, seatID)
 	reply.IsSuccessful = true
 	//reply.Message = fmt.Sprintf("%s booked successfully", seatID)
@@ -705,7 +706,7 @@ type Server struct {
 // TryAcquireLock method that handles client lock acquisition requests
 func (s *Server) TryAcquireLock(req *api.TryAcquireLockRequest, resp *api.TryAcquireLockResponse) error {
 	// Simulate lock acquisition logic
-	if s.locks[req.FilePath] == api.EXCLUSIVE {
+	if s.locks[req.FilePath] == api.RESERVED {
 		resp.IsSuccessful = false
 		return nil
 	}

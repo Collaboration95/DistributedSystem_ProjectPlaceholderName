@@ -18,14 +18,20 @@ type LockMode int
 // shared is for viewing seats
 // free is for no lock [tentative]
 
+// USING THIS FOR LOCK MODE AS OF 11 NOV 818PM
+//seat has 3 status
+//free - not reserved or booked
+//reserved - in the process of booking but not booked
+//booked - booked
 // const (
 // 	EXCLUSIVE LockMode = iota
 // 	SHARED
 // 	FREE
 // )
 const (
-	EXCLUSIVE LockMode = iota
-	FREE
+	FREE LockMode = iota
+	RESERVED
+	BOOKED
 )
 
 /*

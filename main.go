@@ -130,7 +130,7 @@ func main() {
 			// client.StartClient(clientID, serverAddr)
 			// Once session is initialized, clients can proceed to communicate with the server
 			// Simulate the client trying to acquire a lock after initialization
-			success, err := clientSession.TryAcquireLock("file1", api.EXCLUSIVE)
+			success, err := clientSession.TryAcquireLock("file1", api.RESERVED)
 			if err != nil {
 				log.Printf("Client %s error trying to acquire lock: %s", clientID, err)
 			} else {
