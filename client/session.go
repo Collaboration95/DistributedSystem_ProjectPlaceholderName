@@ -523,7 +523,7 @@ func StartClient(clientID api.ClientID, serverAddr string) {
 	log.Printf("Client %s is attempting to acquire lock on file1 with EXCLUSIVE mode", clientID) // Log lock attempt
 	// success, err := clientSession.TryAcquireLock("file1", api.EXCLUSIVE)
 	// success, err := clientSession.TryAcquireLock("file1", api.EXCLUSIVE) //TryAcquireLockUpdated
-	success, err := clientSession.TryAcquireLockUpdated("file1", api.RESERVED) //TryAcquireLockUpdated
+	success, err := clientSession.TryAcquireLockUpdated("file1", api.EXCLUSIVE) //TryAcquireLockUpdated
 
 	if err != nil {
 		log.Printf("Error trying to acquire lock: %s", err)
