@@ -76,7 +76,7 @@ func main() {
 	}
 	startTime := time.Now()
 	for {
-		isSuccessful, err := sess.TryAcquireLock("Lock/Lock1", api.EXCLUSIVE)
+		isSuccessful, err := sess.TryAcquireLock("Lock/Lock1", api.RESERVED)
 		if err != nil {
 			log.Println(err)
 		}
