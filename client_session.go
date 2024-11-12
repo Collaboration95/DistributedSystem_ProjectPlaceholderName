@@ -312,7 +312,7 @@ func (s *Session) DeleteLock(seatID string, clientID string) error {
 	if err != nil || !resp.Success {
 		return fmt.Errorf("Unable to delete lock for seat %s", seatID)
 	}
-	// If successful, remove the RESERVED lock from the local map.
+	// If successful, remove the RESERVED lock from the local map
 	delete(s.locks, seatID)
 	s.logger.Printf("Lock deleted for seat %s by client ID %s", seatID, clientID)
 	return nil
