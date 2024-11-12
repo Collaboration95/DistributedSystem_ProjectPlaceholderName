@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/rpc"
+	"os"
 	"sync"
 	"time"
 )
@@ -223,7 +224,12 @@ func (s *ServerSession) BookSeat(args *RequestArgs, reply *ServerResponse) error
 
 // could be main function
 func Server_Session() {
-	logger := log.Default()
+	// logger := log.Default()
+	// Create a logger for the server
+	logger := log.New(os.Stdout, "[server] ", log.LstdFlags)
+
+	// Log server startup message
+	logger.Println("Server started")
 
 	// Initialize seats globally and start monitoring requests
 	logger.Println("Initializing seats and starting request monitor...")
