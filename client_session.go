@@ -172,6 +172,8 @@ func (s *Session) KeepAlive() {
 type Request struct {
 	SeatID   string
 	ClientID string
+	Type     RequestType // Type of request: RESERVE or RELEASE or BOOK
+	Response chan error  // Channel to send the operation result back to the client
 }
 
 type Response struct {
