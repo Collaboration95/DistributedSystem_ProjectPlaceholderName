@@ -252,16 +252,16 @@ func (s *Session) MonitorSession() {
 	}
 }
 
-// Request Lock of type write for a particular seat
+// Request Lock of type FREE for a particular seat
 func (s *Session) RequestLock(seatID string, clientID string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	//checks if seatID is found in the map s.Locks
 	//ok is true if found and false if not found
 	lockMode, ok := s.locks[seatID]
-	//if lock exists and is a writelock return error
+	//if lock exists and is a RESERVED return error
 	if ok && lockMode.Type == RESERVED {
-		return fmt.Errorf("Seat %s is currently locked", seatID)
+		return fmt.Errorf("Seat %s is currently reserved", seatID)
 	}
 	req := &Request{SeatID: seatID, ClientID: clientID}
 	resp := new(Response)
@@ -271,22 +271,22 @@ func (s *Session) RequestLock(seatID string, clientID string) error {
 	if err != nil || !resp.Success {
 		return fmt.Errorf("Unable to require lock on seat %s", seatID)
 	}
-	// If successful, add the write lock to the local map.
+	// If successful, add the RESERVED lock to the local map.
 	s.locks[seatID] = LockMode{Type: RESERVED}
 	s.logger.Printf("Lock aquired for seat %s by client ID %s", seatID, clientID)
 	return nil
 }
 
-// Release Lock of type write for a particular seat if client changes mind
+// Release Lock of type RESERVED for a particular seat if client changes mind, decides not to book and releases the seats
 func (s *Session) ReleaseLock(seatID string, clientID string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	//checks if seatID is found in the map s.Locks
 	//ok is true if found and false if not found
 	lockMode, ok := s.locks[seatID]
-	//if no write lock is found for the seat return error
+	//if no FREE lock is found for the seat return error
 	if !ok || lockMode.Type != FREE {
-		return fmt.Errorf("Unable to find write lock for seat %s ", seatID)
+		return fmt.Errorf("Unable to find FREE lock for seat %s ", seatID)
 	}
 	req := &Request{SeatID: seatID, ClientID: clientID}
 	resp := new(Response)
@@ -295,13 +295,13 @@ func (s *Session) ReleaseLock(seatID string, clientID string) error {
 	if err != nil || !resp.Success {
 		return fmt.Errorf("Unable to release lock on seat %s", seatID)
 	}
-	// If successful, remove the write lock from the local map.
+	// If successful, remove the lock from the local map.
 	delete(s.locks, seatID)
 	s.logger.Printf("Lock released for seat %s by client ID %s", seatID, clientID)
 	return nil
 }
 
-// Delete Lock of type write for a particular seat if client chooses seat
+// Delete Lock of type RESERVED for a particular seat if client BOOKS seat
 func (s *Session) DeleteLock(seatID string, clientID string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
@@ -312,7 +312,7 @@ func (s *Session) DeleteLock(seatID string, clientID string) error {
 	if err != nil || !resp.Success {
 		return fmt.Errorf("Unable to delete lock for seat %s", seatID)
 	}
-	// If successful, remove the write lock from the local map.
+	// If successful, remove the RESERVED lock from the local map.
 	delete(s.locks, seatID)
 	s.logger.Printf("Lock deleted for seat %s by client ID %s", seatID, clientID)
 	return nil
