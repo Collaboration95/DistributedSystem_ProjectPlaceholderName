@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"net/rpc"
 	"os"
 	"sync"
@@ -20,6 +21,14 @@ const (
 	serverReleaseLock = "Server.ReleaseLock"
 	serverDeleteLock  = "Server.DeleteLock"
 )
+
+var KnownServerAddrs = []string{
+	"127.0.0.1:8002",
+	"127.0.0.1:8003",
+	"127.0.0.1:8004",
+	"127.0.0.1:8001",
+	"127.0.0.1:8000",
+}
 
 // seat has 3 status
 // free | reserved | booked
@@ -40,6 +49,7 @@ type client struct {
 // session manages timings and checks for activity from client
 type Session struct {
 	clientID    int  // who is the client initializing the session?
+	sessionID   int  // added this
 	isExpired   bool // has the session gone past 10 mins?
 	leaseLength time.Duration
 	timeStamp   time.Time           // track the session seconds or minutes
@@ -98,6 +108,7 @@ const (
 func (s *Session) InitSession(clientID int, KnownServerAddrs []string) error {
 	// Step 1: Init session fields
 	s.clientID = clientID
+	// s.sessionID = ??? can be set to either a counter or random num?
 	s.isExpired = false
 	s.timeStamp = time.Now()
 	s.isJeopardy = false
@@ -316,4 +327,62 @@ func (s *Session) DeleteLock(seatID string, clientID string) error {
 	delete(s.locks, seatID)
 	s.logger.Printf("Lock deleted for seat %s by client ID %s", seatID, clientID)
 	return nil
+}
+
+// function to simulate client behaviour
+func simulateClient(clientID int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	session := &Session{}
+	seatID := "seat1A" // Example seat ID to try and reserve for simplicity - number is for row, letter for column
+
+	// step 1: Initialize the session for the client
+	err := session.InitSession(clientID, KnownServerAddrs)
+	if err != nil {
+		log.Printf("Client %d failed to initialize session: %s", clientID, err.Error())
+		return
+	}
+
+	// step 2: attempt to request a lock on the seat
+	err = session.RequestLock(seatID, string(clientID))
+	if err != nil {
+		log.Printf("Client %d failed to request lock on %s: %s", clientID, seatID, err.Error())
+		return
+	}
+	log.Printf("Client %d successfully reserved %s", clientID, seatID)
+
+	// Step 3: Simulate some processing time, then release the lock or delete it
+	time.Sleep(time.Duration(rand.Intn(5)) * time.Second)
+
+	if rand.Float32() < 0.5 {
+		// Release lock if client decides not to book
+		err = session.ReleaseLock(seatID, string(clientID))
+		if err != nil {
+			log.Printf("Client %d failed to release lock on %s: %s", clientID, seatID, err.Error())
+		} else {
+			log.Printf("Client %d released lock on  %s", clientID, seatID)
+		}
+	} else {
+		// delete lock if client books the seat
+		err = session.DeleteLock(seatID, string(clientID))
+		if err != nil {
+			log.Printf("Client %d failed to delete lock on %s: %s", clientID, seatID, err.Error())
+		} else {
+			log.Printf("Client %d booked %s", clientID, seatID)
+		}
+	}
+}
+
+func main() {
+	var wg sync.WaitGroup
+	numClients := 10 // number of clients to simulate
+
+	// start simulation for each client
+	for i := 1; i <= numClients; i++ {
+		wg.Add(1)
+		go simulateClient(i, &wg)
+	}
+
+	// wait for all client to finish
+	wg.Wait()
+	log.Println("Simulation complete")
 }
