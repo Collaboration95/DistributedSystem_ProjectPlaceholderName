@@ -1,5 +1,7 @@
 package main
 
+// package client_session
+
 import (
 	"fmt"
 	"log"
@@ -374,7 +376,9 @@ func simulateClient(clientID int, wg *sync.WaitGroup) {
 	}
 }
 
-func main() {
+func StartClient() {
+	// Simulate client initialization
+	log.Println("Client started, connecting to server...")
 	var wg sync.WaitGroup
 	numClients := 10 // number of clients to simulate
 

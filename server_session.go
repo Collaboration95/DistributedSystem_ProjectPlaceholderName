@@ -47,7 +47,7 @@ var locks = make(map[string]SeatLock)
 
 // TODO :this function should be called using command line at start of demo and when we want to reset all the locks to FREE
 // TODO :otherwise initialization of server session should use a last updated session's lock map
-func initSeats() {
+func InitSeats() {
 	for row := 1; row <= 5; row++ {
 		for col := 'A'; col <= 'E'; col++ {
 			seatID := fmt.Sprintf("%d%c", row, col)
@@ -176,7 +176,7 @@ func (s *ServerSession) BookSeat(seatID string) error {
 // could be main function
 func server_session() {
 	logger := log.Default()
-	initSeats()                    // Initialize seats globally
+	InitSeats()                    // Initialize seats globally
 	go MonitorLockRequestRelease() // Start the centralized request monitor
 
 	// Example usage of ServerSession
