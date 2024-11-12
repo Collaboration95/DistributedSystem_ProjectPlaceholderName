@@ -31,8 +31,8 @@ var requestChan = make(chan Request, 100)
 // Global mutex to protect seat locks across all sessions of server
 var globalMutex = sync.Mutex{}
 
-// Centralized map of seats and their lock modes
-var locks = make(map[string]LockMode)
+// // Centralized map of seats and their lock modes
+// var locks = make(map[string]LockMode)
 
 // SeatLock holds the status of the seat along with the client who has locked or reserved it
 type SeatLock struct {
@@ -41,7 +41,7 @@ type SeatLock struct {
 }
 
 // Global map to store locks and associated client information
-// var locks = make(map[string]SeatLock)
+var locks = make(map[string]SeatLock)
 
 // TODO 12 NOV 756 PM ADD A WAY TO ASSOCIATE CLIENT AND LOCK MODE
 
@@ -51,7 +51,8 @@ func initSeats() {
 	for row := 1; row <= 5; row++ {
 		for col := 'A'; col <= 'E'; col++ {
 			seatID := fmt.Sprintf("%d%c", row, col)
-			locks[seatID] = LockMode{Type: FREE}
+			// locks[seatID] = LockMode{Type: FREE}
+			locks[seatID] = SeatLock{Type: FREE}
 		}
 	}
 }
@@ -106,9 +107,10 @@ func MonitorLockRequestRelease() {
 // processReserve reserves a seat if it is available
 func processReserve(seatID string, clientID string) error {
 	if lockMode, exists := locks[seatID]; exists && lockMode.Type == FREE {
-		locks[seatID] = LockMode{Type: RESERVED}
+		// locks[seatID] = LockMode{Type: RESERVED}
+		locks[seatID] = SeatLock{Type: RESERVED, ClientID: clientID}
 		// TODO : to check if in the current session, the lock mode is RESERVED with same client ID that has sent the request to Book
-		log.Printf("Seat %s reserved by client %d", seatID, clientID)
+		log.Printf("Seat %s reserved by client %s", seatID, clientID)
 		return nil
 	}
 	return fmt.Errorf("seat %s is not available for reservation", seatID)
@@ -117,21 +119,22 @@ func processReserve(seatID string, clientID string) error {
 // processRelease releases a seat if it is currently reserved by the same client
 func processRelease(seatID string, clientID string) error {
 	if lockMode, exists := locks[seatID]; exists && lockMode.Type == RESERVED && lockMode.ClientID == clientID {
-		locks[seatID] = LockMode{Type: FREE}
-		log.Printf("Seat %s released by client %d", seatID, clientID)
+		// locks[seatID] = LockMode{Type: FREE}
+		locks[seatID] = SeatLock{Type: FREE}
+		log.Printf("Seat %s released by client %s", seatID, clientID)
 		return nil
 	}
-	return fmt.Errorf("seat %s is not reserved by client %d", seatID, clientID)
+	return fmt.Errorf("seat %s is not reserved by client %s", seatID, clientID)
 }
 
 // processBook books a seat if it is currently reserved by the requesting client
 func processBook(seatID string, clientID string) error {
 	if lockMode, exists := locks[seatID]; exists && lockMode.Type == RESERVED && lockMode.ClientID == clientID {
 		delete(locks, seatID) // Remove seat from the locks map to complete the booking
-		log.Printf("Seat %s booked by client %d", seatID, clientID)
+		log.Printf("Seat %s booked by client %s", seatID, clientID)
 		return nil
 	}
-	return fmt.Errorf("seat %s is not reserved by client %d or already booked", seatID, clientID)
+	return fmt.Errorf("seat %s is not reserved by client %s or already booked", seatID, clientID)
 }
 
 // RequestLock sends a lock request to the server to reserve a seat
