@@ -8,6 +8,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/rpc"
 	"sync"
 	"time"
@@ -174,27 +175,66 @@ func (s *ServerSession) BookSeat(seatID string) error {
 }
 
 // could be main function
-func server_session() {
+func Server_Session() {
 	logger := log.Default()
-	InitSeats()                    // Initialize seats globally
-	go MonitorLockRequestRelease() // Start the centralized request monitor
 
-	// Example usage of ServerSession
-	session := NewServerSession(1, logger)
-	err := session.RequestLock("1A")
+	// Initialize seats globally and start monitoring requests
+	logger.Println("Initializing seats and starting request monitor...")
+	InitSeats()
+	go MonitorLockRequestRelease()
+
+	// Register ServerSession methods with RPC so they can be called by the client
+	server := new(ServerSession)
+	err := rpc.Register(server)
 	if err != nil {
-		logger.Println("Failed to reserve:", err)
-	} else {
-		logger.Println("Seat reserved successfully.")
+		logger.Fatal("Error registering ServerSession:", err)
 	}
 
-	err = session.BookSeat("1A")
+	// Start listening on port 8000
+	listener, err := net.Listen("tcp", "127.0.0.1:8000")
 	if err != nil {
-		logger.Println("Failed to book:", err)
-	} else {
-		logger.Println("Seat booked successfully.")
+		logger.Fatal("Error starting server:", err)
+	}
+	defer listener.Close()
+	logger.Println("Server is listening on port 8000...")
+
+	// Accept incoming connections in a loop
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			logger.Println("Connection error:", err)
+			continue
+		}
+		logger.Println("Accepted new connection...")
+		go func(c net.Conn) {
+			logger.Println("Handling new RPC connection...")
+			rpc.ServeConn(c) // Handle the connection in a new goroutine
+		}(conn)
 	}
 }
+
+// // could be main function
+// func server_session() {
+// 	logger := log.Default()
+// 	InitSeats()                    // Initialize seats globally
+// 	go MonitorLockRequestRelease() // Start the centralized request monitor
+
+// 	// Example usage of ServerSession
+// 	session := NewServerSession(1, logger)
+// 	err := session.RequestLock("1A")
+// 	if err != nil {
+// 		logger.Println("Failed to reserve:", err)
+// 	} else {
+// 		logger.Println("Seat reserved successfully.")
+// 	}
+
+// 	err = session.BookSeat("1A")
+// 	if err != nil {
+// 		logger.Println("Failed to book:", err)
+// 	} else {
+// 		logger.Println("Seat booked successfully.")
+// 	}
+// }
 
 // // CheckSeatAvailability checks if a specific seat is FREE for reservation
 // func (s *ServerSession) CheckSeatAvailability(seatID string) bool {

@@ -7,7 +7,8 @@ import (
 
 func main() {
 	// Initialize the seats
-	InitSeats()
+	// InitSeats()
+	Server_Session()
 	StartClient()
 
 	// Create a logger for the server
