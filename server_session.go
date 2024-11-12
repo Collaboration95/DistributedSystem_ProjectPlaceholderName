@@ -20,6 +20,15 @@ import (
 // RequestType specifies if the operation is to reserve or release a seat
 type RequestType string
 
+type RequestArgs struct {
+	ClientID string
+	SeatID   string
+}
+
+type ServerResponse struct {
+	Err error
+}
+
 const (
 	Reserve RequestType = "RESERVE"
 	Release RequestType = "RELEASE"
@@ -139,39 +148,77 @@ func processBook(seatID string, clientID string) error {
 }
 
 // RequestLock sends a lock request to the server to reserve a seat
-func (s *ServerSession) RequestLock(seatID string) error {
+// func (s *ServerSession) RequestLock(seatID string) error {
+// 	responseChan := make(chan error)
+// 	requestChan <- Request{
+// 		ClientID: string(s.clientID),
+// 		SeatID:   seatID,
+// 		Type:     Reserve,
+// 		Response: responseChan,
+// 	}
+// 	return <-responseChan // Wait for the result from MonitorLockRequestRelease
+// }
+
+// RequestLock sends a lock request to the server to reserve a seat
+// Updated methods to be compatible with RPC requirements
+func (s *ServerSession) RequestLock(args *RequestArgs, reply *ServerResponse) error {
 	responseChan := make(chan error)
 	requestChan <- Request{
-		ClientID: string(s.clientID),
-		SeatID:   seatID,
+		ClientID: args.ClientID,
+		SeatID:   args.SeatID,
 		Type:     Reserve,
 		Response: responseChan,
 	}
-	return <-responseChan // Wait for the result from MonitorLockRequestRelease
+	reply.Err = <-responseChan // Store the error in reply struct
+	return reply.Err
 }
 
 // ReleaseLock sends a release request to the server to release a reserved seat
-func (s *ServerSession) ReleaseLock(seatID string) error {
+// func (s *ServerSession) ReleaseLock(seatID string) error {
+// 	responseChan := make(chan error)
+// 	requestChan <- Request{
+// 		ClientID: string(s.clientID),
+// 		SeatID:   seatID,
+// 		Type:     Release,
+// 		Response: responseChan,
+// 	}
+// 	return <-responseChan // Wait for the result from MonitorLockRequestRelease
+// }
+
+func (s *ServerSession) ReleaseLock(args *RequestArgs, reply *ServerResponse) error {
 	responseChan := make(chan error)
 	requestChan <- Request{
-		ClientID: string(s.clientID),
-		SeatID:   seatID,
+		ClientID: args.ClientID,
+		SeatID:   args.SeatID,
 		Type:     Release,
 		Response: responseChan,
 	}
-	return <-responseChan // Wait for the result from MonitorLockRequestRelease
+	reply.Err = <-responseChan // Store the error in reply struct
+	return reply.Err
 }
 
 // BookSeat sends a booking request to the server to book a reserved seat
-func (s *ServerSession) BookSeat(seatID string) error {
+// func (s *ServerSession) BookSeat(seatID string) error {
+// 	responseChan := make(chan error)
+// 	requestChan <- Request{
+// 		ClientID: string(s.clientID),
+// 		SeatID:   seatID,
+// 		Type:     Book,
+// 		Response: responseChan,
+// 	}
+// 	return <-responseChan // Wait for the result from MonitorLockRequestRelease
+// }
+
+func (s *ServerSession) BookSeat(args *RequestArgs, reply *ServerResponse) error {
 	responseChan := make(chan error)
 	requestChan <- Request{
-		ClientID: string(s.clientID),
-		SeatID:   seatID,
+		ClientID: args.ClientID,
+		SeatID:   args.SeatID,
 		Type:     Book,
 		Response: responseChan,
 	}
-	return <-responseChan // Wait for the result from MonitorLockRequestRelease
+	reply.Err = <-responseChan // Store the error in reply struct
+	return reply.Err
 }
 
 // could be main function
