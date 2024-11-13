@@ -8,7 +8,7 @@ import (
 )
 
 // Global interval for periodic logging
-const logInterval = 2 * time.Second
+const logInterval = 10 * time.Second // OLD VALUE = 2s
 
 // Struct to hold loggable status
 type ServerStatus struct {

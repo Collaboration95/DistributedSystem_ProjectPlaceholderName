@@ -9,18 +9,18 @@
     },
     {
       "ID": 1,
-      "State": 2,
-      "CurrentTerm": 1,
-      "VoteCount": 3,
-      "IsLeader": true
-    },
-    {
-      "ID": 2,
       "State": 0,
       "CurrentTerm": 1,
       "VoteCount": 0,
       "IsLeader": false
+    },
+    {
+      "ID": 2,
+      "State": 2,
+      "CurrentTerm": 1,
+      "VoteCount": 3,
+      "IsLeader": true
     }
   ],
-  "timestamp": "2024-11-01 15:46:20"
+  "timestamp": "2024-11-07 15:24:15"
 }
