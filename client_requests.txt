@@ -1,0 +1,7 @@
+client1 1A RESERVE
+client2 1B RESERVE
+client3 2A RESERVE
+client4 2C RESERVE
+client5 3A RESERVE
+client6 4C RESERVE
+client7 2C RESERVE
