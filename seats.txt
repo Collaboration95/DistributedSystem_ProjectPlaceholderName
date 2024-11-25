@@ -1,0 +1,12 @@
+1A:available
+1B:occupied
+1C:available
+2A:available
+2B:occupied
+2C:available
+3A:occupied
+3B:occupied
+3C:available
+4A:occupied
+4B:available
+4C:available
