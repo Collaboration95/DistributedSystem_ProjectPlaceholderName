@@ -139,10 +139,12 @@ func main() {
 	// Create channels for server sessions
 	serverCh1 := make(chan Request)
 	serverCh2 := make(chan Request)
+	serverCh3 := make(chan Request)
 
 	// Start server sessions
 	go serverSession("server1", serverCh1)
 	go serverSession("server2", serverCh2)
+	go serverSession("server3", serverCh3)
 
 	// Start client sessions with concurrent requests
 	go clientSession("client1", serverCh1, []Request{
@@ -157,6 +159,17 @@ func main() {
 	})
 
 	go clientSession("client2", serverCh2, []Request{
+		{SeatID: "1A", Type: "RESERVE"},
+		{SeatID: "2A", Type: "RESERVE"},
+		{SeatID: "3A", Type: "RESERVE"},
+		{SeatID: "4A", Type: "RESERVE"},
+		{SeatID: "1B", Type: "RESERVE"},
+		{SeatID: "2B", Type: "RESERVE"},
+		{SeatID: "3B", Type: "RESERVE"},
+		{SeatID: "4B", Type: "RESERVE"},
+	})
+
+	go clientSession("client3", serverCh3, []Request{
 		{SeatID: "1A", Type: "RESERVE"},
 		{SeatID: "2A", Type: "RESERVE"},
 		{SeatID: "3A", Type: "RESERVE"},
