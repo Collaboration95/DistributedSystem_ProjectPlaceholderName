@@ -1,13 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"net"
 	"net/rpc"
 	"os"
 	"strings"
-	"bufio"
 )
 
 type ServerSession struct {
@@ -79,20 +79,21 @@ func (s *ServerSession) RequestLock(args *RequestArgs, reply *ServerResponse) er
 }
 
 // Server_Session handles server connection and requests
-func Server_Session() {
+func Server_Session(port string) {
 	server := new(ServerSession)
 	err := rpc.Register(server)
 	if err != nil {
 		log.Fatal("Error registering server:", err)
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:8000")
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%s", port))
 	if err != nil {
-		log.Fatal("Error starting server:", err)
+		log.Fatal("Error starting server on port", port, ":", err)
 	}
 	defer listener.Close()
 
-	// Accept incoming connections and serve RPC requests
+	log.Printf("Server started on port %s\n", port)
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
