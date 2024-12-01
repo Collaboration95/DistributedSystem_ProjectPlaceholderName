@@ -1,3 +1,9 @@
 # Movie Booking Website
 
-Run using go run main.go server_session.go client_session.go common.go
+cd server
+go run server.go
+
+then
+
+cd client
+go run client.go
