@@ -1,0 +1,126 @@
+//client/client.go
+
+package main
+
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"log"
+	"net/rpc"
+	"os"
+	"rpc-system/common"
+	"strings"
+	"sync"
+	"time"
+)
+
+func clientSession(clientID, serverID string, requests []common.Request, client *rpc.Client, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for _, req := range requests {
+		req.ClientID = clientID
+		req.ServerID = serverID
+
+		log.Printf("[Client %s] Sending request: %+v", clientID, req) // Log the request being sent
+
+		var res common.Response
+		err := client.Call("Server.ProcessRequest", &req, &res)
+		if err != nil {
+			log.Printf("[Client %s] Error sending request: %s", clientID, err)
+			continue
+		}
+		log.Printf("[Client %s] Response from server: %s", clientID, res.Message)
+		time.Sleep(500 * time.Millisecond) // Simulate delay
+	}
+}
+
+func connectToMasterServer() (*rpc.Client, error) {
+	client, err := rpc.Dial("tcp", "127.0.0.1:12345") // Connect to server
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+func getUserRequests() []common.Request {
+	reader := bufio.NewReader(os.Stdin)
+	requests := []common.Request{}
+
+	fmt.Println("Enter your requests (Type 'done' to finish):")
+	for {
+		fmt.Print("Enter SeatID (e.g., 1A): ")
+		seatID, _ := reader.ReadString('\n')
+		seatID = strings.TrimSpace(seatID)
+
+		// Exit if user inputs "done"
+		if strings.ToLower(seatID) == "done" {
+			break
+		}
+
+		fmt.Print("Enter Request Type (e.g., RESERVE or CANCEL): ")
+		reqType, _ := reader.ReadString('\n')
+		reqType = strings.TrimSpace(reqType)
+
+		// Validate input
+		if seatID == "" || reqType == "" {
+			fmt.Println("Invalid input. Please enter both SeatID and Request Type.")
+			continue
+		}
+
+		// Append the request
+		requests = append(requests, common.Request{
+			SeatID: seatID,
+			Type:   reqType,
+		})
+	}
+
+	return requests
+}
+func startClientSession(clientID string, rpcClient *rpc.Client) {
+	var reply string
+	err := rpcClient.Call("Server.CreateSession", clientID, &reply)
+	if err != nil {
+		log.Fatalf("[Client %s] Error creating session: %s", clientID, err)
+	}
+	log.Printf("[Client %s] Session created: %s", clientID, reply)
+
+	serverID := fmt.Sprintf("server-session-%s", clientID)
+
+	// Get user input for requests
+	requests := getUserRequests()
+	if len(requests) == 0 {
+		log.Println("No requests entered. Exiting...")
+		return
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go clientSession(clientID, serverID, requests, rpcClient, &wg)
+
+	wg.Wait()
+}
+
+func getClientID() string {
+	clientID := flag.String("clientID", "", "Unique client ID")
+	flag.Parse()
+	if *clientID == "" {
+		log.Fatalf("Client ID is required. Use --clientID flag to specify one.")
+	}
+	return *clientID
+}
+
+func main() {
+	clientID := getClientID()
+
+	//currently assuming one server first
+	//client, err := rpc.Dial("tcp", "127.0.0.1:12345") // Connect to server
+	//server team to rework this part after implementing replicas
+	client, err := connectToMasterServer()
+	if err != nil {
+		log.Fatalf("Error connecting to server: %s", err)
+	}
+	defer client.Close()
+	startClientSession(clientID, client)
+}
