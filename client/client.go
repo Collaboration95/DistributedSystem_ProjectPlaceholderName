@@ -13,6 +13,8 @@ import (
 )
 
 // clientSession continuously processes requests from a channel until it is closed.
+// clientSession continuously processes requests from a channel until it is closed.
+// clientSession continuously processes requests from a channel until it is closed.
 func clientSession(clientID, serverID string, client *rpc.Client, requestCh chan common.Request, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -28,7 +30,9 @@ func clientSession(clientID, serverID string, client *rpc.Client, requestCh chan
 			log.Printf("[Client %s] Error sending request: %s", clientID, err)
 			continue
 		}
-		log.Printf("[Client %s] Response from server: %s", clientID, res.Message)
+
+		// Log the server response
+		log.Printf("[Client %s] Server response (%s): %s", clientID, res.Status, res.Message)
 	}
 
 	log.Printf("[Client %s] Request channel closed. Ending session.", clientID)
@@ -54,7 +58,7 @@ func startClientSession(clientID string, rpcClient *rpc.Client) {
 
 	serverID := fmt.Sprintf("server-session-%s", clientID)
 
-	// Create a channel for sending requests
+	// Create a channel for sending requests via cli inputs
 	requestCh := make(chan common.Request)
 	var wg sync.WaitGroup
 	wg.Add(1)

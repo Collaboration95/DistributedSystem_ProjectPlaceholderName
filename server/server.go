@@ -1,4 +1,3 @@
-// server/server.go
 package main
 
 import (
@@ -13,26 +12,26 @@ import (
 
 // Server manages server sessions and processes requests
 type Server struct {
-	sessions   map[string]chan common.Request // Map of session IDs to channels
-	requests   chan common.Request            // Shared request queue
-	seats      map[string]string              // Shared seat map
-	mu         sync.Mutex                     // Protect shared resources
-	sessionMux sync.Mutex                     // Protect session map
-	nextID     int                            // Next session ID (simple counter)
+	sessions   map[string]chan common.Request  // Map of session IDs to channels
+	requests   chan common.Request             // Global processing queue
+	responses  map[string]chan common.Response // Map of client request IDs to response channels
+	seats      map[string]string               // Shared seat map
+	mu         sync.Mutex                      // Protect shared resources
+	sessionMux sync.Mutex                      // Protect session map
 }
 
 // NewServer initializes the server
 func NewServer() *Server {
 	return &Server{
-		sessions: make(map[string]chan common.Request),
-		requests: make(chan common.Request, 100),
+		sessions:  make(map[string]chan common.Request),
+		requests:  make(chan common.Request, 100), // Global processing queue
+		responses: make(map[string]chan common.Response),
 		seats: map[string]string{
 			"1A": "available",
 			"1B": "available",
 			"2A": "available",
 			"2B": "occupied",
 		},
-		nextID: 1,
 	}
 }
 
@@ -44,7 +43,8 @@ func (s *Server) CreateSession(clientID string, reply *string) error {
 	// Use clientID for sessionID
 	sessionID := fmt.Sprintf("server-session-%s", clientID)
 
-	sessionCh := make(chan common.Request)
+	// Create a channel for the session
+	sessionCh := make(chan common.Request, 10) // Buffer size can be adjusted
 	s.sessions[sessionID] = sessionCh
 
 	// Start the server session
@@ -55,51 +55,91 @@ func (s *Server) CreateSession(clientID string, reply *string) error {
 	return nil
 }
 
-// serverSession handles requests for a specific client
+// serverSession forwards requests to the global processing queue
 func (s *Server) serverSession(sessionID string, requestCh chan common.Request) {
 	log.Printf("Server session %s started", sessionID)
+
 	for req := range requestCh {
-		req.ServerID = sessionID
-		s.requests <- req // Forward request to shared queue
+		log.Printf("Session %s received request: %+v", sessionID, req)
+
+		// Forward the request to the global processing queue
+		s.requests <- req
 	}
+
+	log.Printf("Server session %s ended", sessionID)
 }
 
-// ProcessRequest handles client requests
+// ProcessRequest handles client requests and queues them for asynchronous processing
 func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error {
+	// Find the session channel
 	s.sessionMux.Lock()
-	sessionCh, exists := s.sessions[req.ServerID]
+	sessionCh, sessionExists := s.sessions[req.ServerID]
 	s.sessionMux.Unlock()
 
-	if !exists {
+	if !sessionExists {
 		res.Message = fmt.Sprintf("Session %s does not exist", req.ServerID)
+		res.Status = "FAILURE"
 		return nil
 	}
 
-	// Forward the request to the session
+	// Create a response channel for this request
+	responseCh := make(chan common.Response, 1) // Buffer size of 1
+	s.mu.Lock()
+	s.responses[req.ClientID] = responseCh
+	s.mu.Unlock()
+
+	// Forward the request to the session channel
 	sessionCh <- *req
-	res.Message = fmt.Sprintf("Request forwarded to session %s", req.ServerID)
+
+	// Wait for the response
+	response := <-responseCh
+	res.Status = response.Status
+	res.Message = response.Message
+
+	// Clean up the response channel
+	s.mu.Lock()
+	delete(s.responses, req.ClientID)
+	s.mu.Unlock()
+
 	return nil
 }
 
-// processQueue processes requests from the shared queue
+// processQueue processes requests from the global processing queue
 func (s *Server) processQueue() {
 	for req := range s.requests {
 		s.mu.Lock()
+
+		responseMessage := ""
+		status := "SUCCESS"
+
 		switch req.Type {
 		case "RESERVE":
-			if status, exists := s.seats[req.SeatID]; exists {
-				if status == "available" {
+			if seatStatus, exists := s.seats[req.SeatID]; exists {
+				if seatStatus == "available" {
 					s.seats[req.SeatID] = "occupied"
-					log.Printf("Seat %s reserved for client %s by %s", req.SeatID, req.ClientID, req.ServerID)
+					responseMessage = fmt.Sprintf("Seat %s reserved for client %s by %s", req.SeatID, req.ClientID, req.ServerID)
 				} else {
-					log.Printf("Seat %s already occupied. Client %s by %s", req.SeatID, req.ClientID, req.ServerID)
+					responseMessage = fmt.Sprintf("Seat %s already occupied. Client %s by %s", req.SeatID, req.ClientID, req.ServerID)
+					status = "FAILURE"
 				}
 			} else {
-				log.Printf("Seat %s does not exist. Client %s by %s", req.SeatID, req.ClientID, req.ServerID)
+				responseMessage = fmt.Sprintf("Seat %s does not exist. Client %s by %s", req.SeatID, req.ClientID, req.ServerID)
+				status = "FAILURE"
 			}
 		default:
-			log.Printf("Invalid operation %s by client %s via %s", req.Type, req.ClientID, req.ServerID)
+			responseMessage = fmt.Sprintf("Invalid operation %s by client %s via %s", req.Type, req.ClientID, req.ServerID)
+			status = "FAILURE"
 		}
+
+		log.Printf("[%s] %s", status, responseMessage)
+
+		// Send the response back to the client
+		responseCh := s.responses[req.ClientID]
+		responseCh <- common.Response{
+			Status:  status,
+			Message: responseMessage,
+		}
+
 		s.mu.Unlock()
 	}
 }
@@ -111,7 +151,8 @@ func main() {
 		log.Fatalf("Error registering server: %s", err)
 	}
 
-	go server.processQueue() // Start processing the shared queue
+	// Start the global processing queue goroutine
+	go server.processQueue()
 
 	listener, err := net.Listen("tcp", ":12345") // Server listens on port 12345
 	if err != nil {
