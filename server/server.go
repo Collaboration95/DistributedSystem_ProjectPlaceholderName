@@ -1,3 +1,4 @@
+// server/server.go
 package main
 
 import (
@@ -40,9 +41,8 @@ func (s *Server) CreateSession(clientID string, reply *string) error {
 	s.sessionMux.Lock()
 	defer s.sessionMux.Unlock()
 
-	// Assign a unique session ID
-	sessionID := fmt.Sprintf("server-session-%d", s.nextID)
-	s.nextID++
+	// Use clientID for sessionID
+	sessionID := fmt.Sprintf("server-session-%s", clientID)
 
 	sessionCh := make(chan common.Request)
 	s.sessions[sessionID] = sessionCh

@@ -1,3 +1,4 @@
+// common/common.go
 package common
 
 // Request represents a client request

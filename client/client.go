@@ -1,13 +1,15 @@
+//client/client.go
+
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net/rpc"
+	"rpc-system/common"
 	"sync"
 	"time"
-
-	"rpc-system/common"
 )
 
 func clientSession(clientID, serverID string, requests []common.Request, client *rpc.Client, wg *sync.WaitGroup) {
@@ -28,68 +30,52 @@ func clientSession(clientID, serverID string, requests []common.Request, client 
 	}
 }
 
-func main() {
+func connectToMasterServer() (*rpc.Client, error) {
 	client, err := rpc.Dial("tcp", "127.0.0.1:12345") // Connect to server
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+func startClientSession(clientID string, rpcClient *rpc.Client) {
+	var reply string
+	err := rpcClient.Call("Server.CreateSession", clientID, &reply)
+	if err != nil {
+		log.Fatalf("[Client %s] Error creating session: %s", clientID, err)
+	}
+	log.Printf("[Client %s] Session created: %s", clientID, reply)
+
+	serverID := fmt.Sprintf("server-session-%s", clientID)
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go clientSession(clientID, serverID, []common.Request{
+		{SeatID: "1A", Type: "RESERVE"},
+		{SeatID: "1B", Type: "RESERVE"},
+	}, rpcClient, &wg)
+
+	wg.Wait()
+}
+
+func getClientID() string {
+	clientID := flag.String("clientID", "", "Unique client ID")
+	flag.Parse()
+	if *clientID == "" {
+		log.Fatalf("Client ID is required. Use --clientID flag to specify one.")
+	}
+	return *clientID
+}
+
+func main() {
+	clientID := getClientID()
+
+	//currently assuming one server first
+	//client, err := rpc.Dial("tcp", "127.0.0.1:12345") // Connect to server
+	//server team to rework this part after implementing replicas
+	client, err := connectToMasterServer()
 	if err != nil {
 		log.Fatalf("Error connecting to server: %s", err)
 	}
 	defer client.Close()
-
-	// Client 1
-	clientID1 := "client-1"
-	var reply1 string
-	err = client.Call("Server.CreateSession", clientID1, &reply1)
-	if err != nil {
-		log.Fatalf("[Client %s] Error creating session: %s", clientID1, err)
-	}
-	log.Printf("[Client %s] %s", clientID1, reply1)
-
-	serverID1 := fmt.Sprintf("server-session-1")
-
-	// Client 2
-	clientID2 := "client-2"
-	var reply2 string
-	err = client.Call("Server.CreateSession", clientID2, &reply2)
-	if err != nil {
-		log.Fatalf("[Client %s] Error creating session: %s", clientID2, err)
-	}
-	log.Printf("[Client %s] %s", clientID2, reply2)
-
-	serverID2 := fmt.Sprintf("server-session-2")
-
-	// Client 3
-	clientID3 := "client-3"
-	var reply3 string
-	err = client.Call("Server.CreateSession", clientID3, &reply3)
-	if err != nil {
-		log.Fatalf("[Client %s] Error creating session: %s", clientID3, err)
-	}
-	log.Printf("[Client %s] %s", clientID3, reply3)
-
-	serverID3 := fmt.Sprintf("server-session-3")
-
-	// Start client sessions
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go clientSession(clientID1, serverID1, []common.Request{
-		{SeatID: "1A", Type: "RESERVE"},
-		{SeatID: "1B", Type: "RESERVE"},
-		{SeatID: "2A", Type: "RESERVE"},
-		{SeatID: "2B", Type: "RESERVE"},
-	}, client, &wg)
-
-	go clientSession(clientID2, serverID2, []common.Request{
-		{SeatID: "2A", Type: "RESERVE"},
-		{SeatID: "2B", Type: "RESERVE"},
-		{SeatID: "1A", Type: "RESERVE"},
-		{SeatID: "1B", Type: "RESERVE"},
-	}, client, &wg)
-	go clientSession(clientID3, serverID3, []common.Request{
-		{SeatID: "2A", Type: "RESERVE"},
-		{SeatID: "2B", Type: "RESERVE"},
-		{SeatID: "1A", Type: "RESERVE"},
-		{SeatID: "1B", Type: "RESERVE"},
-	}, client, &wg)
-	wg.Wait()
+	startClientSession(clientID, client)
 }
