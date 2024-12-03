@@ -10,11 +10,16 @@ import (
 	"rpc-system/common"
 	"strings"
 	"sync"
+	"time"
 )
 
-// clientSession continuously processes requests from a channel until it is closed.
-// clientSession continuously processes requests from a channel until it is closed.
-// clientSession continuously processes requests from a channel until it is closed.
+// HeartbeatInterval sets how often the client sends keepalives to the server
+const HeartbeatInterval = 5 * time.Second
+
+// KeepAliveTimeout sets how long the client waits for a keepalive response before assuming failure
+const KeepAliveTimeout = 10 * time.Second
+
+// clientSession processes requests from the input channel and handles responses
 func clientSession(clientID, serverID string, client *rpc.Client, requestCh chan common.Request, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -38,7 +43,38 @@ func clientSession(clientID, serverID string, client *rpc.Client, requestCh chan
 	log.Printf("[Client %s] Request channel closed. Ending session.", clientID)
 }
 
-// connectToMasterServer establishes an RPC connection to the server.
+// sendHeartbeat sends periodic keepalive messages to the server
+func sendHeartbeat(clientID, serverID string, client *rpc.Client, done chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	ticker := time.NewTicker(HeartbeatInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			req := common.Request{
+				ClientID: clientID,
+				ServerID: serverID,
+				Type:     "KEEPALIVE",
+			}
+
+			var res common.Response
+			err := client.Call("Server.ProcessRequest", &req, &res)
+			if err != nil {
+				log.Printf("[Client %s] Error sending KeepAlive: %s", clientID, err)
+				return // Assume server is unreachable and exit
+			}
+			log.Printf("[Client %s] KeepAlive response: %s", clientID, res.Message)
+
+		case <-done:
+			log.Printf("[Client %s] Stopping KeepAlive.", clientID)
+			return
+		}
+	}
+}
+
+// connectToMasterServer establishes an RPC connection to the server
 func connectToMasterServer() (*rpc.Client, error) {
 	client, err := rpc.Dial("tcp", "127.0.0.1:12345") // Connect to server
 	if err != nil {
@@ -47,7 +83,7 @@ func connectToMasterServer() (*rpc.Client, error) {
 	return client, nil
 }
 
-// startClientSession starts the client session and allows dynamic input of requests.
+// startClientSession starts the client session and manages dynamic request input and heartbeats
 func startClientSession(clientID string, rpcClient *rpc.Client) {
 	var reply string
 	err := rpcClient.Call("Server.CreateSession", clientID, &reply)
@@ -58,20 +94,25 @@ func startClientSession(clientID string, rpcClient *rpc.Client) {
 
 	serverID := fmt.Sprintf("server-session-%s", clientID)
 
-	// Create a channel for sending requests via cli inputs
+	// Create a channel for sending requests
 	requestCh := make(chan common.Request)
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
+
+	// Channel to signal the heartbeat goroutine to stop
+	heartbeatDone := make(chan struct{})
 
 	// Start the client session as a goroutine
 	go clientSession(clientID, serverID, rpcClient, requestCh, &wg)
+
+	// Start the heartbeat mechanism
+	go sendHeartbeat(clientID, serverID, rpcClient, heartbeatDone, &wg)
 
 	// Input loop for dynamic request entry
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Enter your requests (Type 'done' to finish):")
 
 	for {
-		// Prompt for SeatID
 		fmt.Print("Enter SeatID (e.g., 1A): ")
 		seatID, _ := reader.ReadString('\n')
 		seatID = strings.TrimSpace(seatID)
@@ -81,32 +122,30 @@ func startClientSession(clientID string, rpcClient *rpc.Client) {
 			break
 		}
 
-		// Prompt for Request Type
 		fmt.Print("Enter Request Type (e.g., RESERVE or CANCEL): ")
 		reqType, _ := reader.ReadString('\n')
 		reqType = strings.TrimSpace(reqType)
 
-		if seatID == "" || reqType == "" { // Validate input
+		if seatID == "" || reqType == "" {
 			fmt.Println("Invalid input. Please enter both SeatID and Request Type.")
 			continue
 		}
 
-		// Send the request to the channel
 		request := common.Request{
 			SeatID: seatID,
 			Type:   reqType,
 		}
-		fmt.Printf("Added request to queue: %+v\n", request) // Explicit prompt without logging
+		fmt.Printf("Added request to queue: %+v\n", request)
 		requestCh <- request
 	}
 
-	// Close the channel after user input is done
-	close(requestCh)
-	wg.Wait() // Wait for the session goroutine to finish
+	close(requestCh)     // Close the request channel after input is done
+	close(heartbeatDone) // Stop the heartbeat goroutine
+	wg.Wait()            // Wait for both goroutines to finish
 	fmt.Printf("Session ended for client: %s\n", clientID)
 }
 
-// getClientID parses the client ID from command-line arguments.
+// getClientID parses the client ID from command-line arguments
 func getClientID() string {
 	clientID := flag.String("clientID", "", "Unique client ID")
 	flag.Parse()
