@@ -10,5 +10,6 @@ type Request struct {
 
 // Response represents the server's response
 type Response struct {
+	Status  string // e.g., "SUCCESS", "FAILURE"
 	Message string
 }
