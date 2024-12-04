@@ -15,6 +15,7 @@ import (
 )
 
 type Seat struct {
+	SeatID string
 	Status    string
 	ClientID  string
 }
@@ -67,6 +68,7 @@ func (s *Server) loadSeats() error {
             status := strings.TrimSpace(parts[1])
 			clientID := strings.TrimSpace(parts[2])
             s.seats[seatID] = Seat{ 
+				SeatID: seatID,
 				Status:   status,
 				ClientID: clientID,
 			}
@@ -221,6 +223,7 @@ func (s *Server) processQueue() {
             case "RESERVE":
                 if seat.Status == "available" {
                     s.seats[seatID] = Seat{
+						SeatID: req.SeatID,
                         Status:   "occupied",
                         ClientID: req.ClientID, 
                     }
@@ -233,6 +236,7 @@ func (s *Server) processQueue() {
             case "CANCEL":
                 if seat.Status == "occupied" {
                     s.seats[seatID] = Seat{
+						SeatID: req.SeatID,
                         Status:   "available",
                         ClientID: "", 
                     }
