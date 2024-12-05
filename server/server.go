@@ -87,7 +87,7 @@ func (s *Server) saveSeats() error {
 	defer file.Close()
 	writer := bufio.NewWriter(file)
 	for seatID, seat := range s.seats {
-		_, err := fmt.Fprintf(writer, "%s: %s, %s\n", seatID, seat.Status, seat.ClientID)
+		_, err := fmt.Fprintf(writer, "%s: %s: %s\n", seatID, seat.Status, seat.ClientID)
 		if err != nil {
 			return fmt.Errorf("failed to write seat data to file: %w", err)
 		}
