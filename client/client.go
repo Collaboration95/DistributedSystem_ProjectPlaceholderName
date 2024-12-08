@@ -13,10 +13,30 @@ import (
 	"time"
 )
 
+type Client struct {
+	ID            string
+	ServerID      string
+	RPCClient     *rpc.Client
+	RequestCh     chan common.Request
+	HeartbeatDone chan struct{}
+	WaitGroup     sync.WaitGroup
+}
+
 const (
 	HeartbeatInterval = 5 * time.Second
 	KeepAliveTimeout  = 10 * time.Second
 )
+
+func init_Client(clientID string, rpcClient *rpc.Client) *Client {
+	serverID := fmt.Sprintf("server-session-%s", clientID)
+	return &Client{
+		ID:            clientID,
+		ServerID:      serverID,
+		RPCClient:     rpcClient,
+		RequestCh:     make(chan common.Request),
+		HeartbeatDone: make(chan struct{}),
+	}
+}
 
 // clientSession processes requests from the input channel and handles responses
 func clientSession(clientID, serverID string, client *rpc.Client, requestCh chan common.Request, wg *sync.WaitGroup) {
@@ -145,6 +165,52 @@ func startClientSession(clientID string, rpcClient *rpc.Client) {
 	fmt.Printf("Session ended for client: %s\n", clientID)
 }
 
+func (c *Client) StartSession() {
+	var reply string
+	err := c.RPCClient.Call("Server.CreateSession", c.ID, &reply)
+	if err != nil {
+		log.Fatalf("[Client %s] Error creating session: %s", c.ID, err)
+	}
+	log.Printf("[Client %s] Session created: %s", c.ID, reply)
+	c.WaitGroup.Add(2)
+	go c.clientSession()
+	go c.sendHeartbeat()
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Enter your requests (Type 'done' to finish):")
+	for {
+		fmt.Print("Enter SeatID (e.g., 1A): ")
+		seatID, _ := reader.ReadString('\n')
+		seatID = strings.TrimSpace(seatID)
+
+		if strings.ToLower(seatID) == "done" { // Exit input loop
+			fmt.Println("Finishing input. Closing request channel...")
+			break
+		}
+
+		fmt.Print("Enter Request Type (e.g., RESERVE or CANCEL): ")
+		reqType, _ := reader.ReadString('\n')
+		reqType = strings.TrimSpace(reqType)
+
+		if seatID == "" || reqType == "" {
+			fmt.Println("Invalid input. Please enter both SeatID and Request Type.")
+			continue
+		}
+
+		request := common.Request{
+			SeatID: seatID,
+			Type:   reqType,
+		}
+		fmt.Printf("Added request to queue: %+v\n", request)
+		c.RequestCh <- request
+	}
+
+	close(c.RequestCh)     // Close the request channel after input is done
+	close(c.HeartbeatDone) // Stop the heartbeat goroutine
+	c.WaitGroup.Wait()     // Wait for both goroutines to finish
+	fmt.Printf("Session ended for client: %s\n", c.ID)
+}
+
 // getClientID parses the client ID from command-line arguments
 func getClientID() string {
 	clientID := flag.String("clientID", "", "Unique client ID")
@@ -160,13 +226,16 @@ func main() {
 	clientID := getClientID()
 
 	// Connect to the server
-	client, err := connectToMasterServer()
+	rpc_Client, err := connectToMasterServer()
 
 	if err != nil {
 		log.Fatalf("Error connecting to server: %s", err)
 	}
-	defer client.Close()
+	defer rpc_Client.Close()
 
 	// Start the client session
-	startClientSession(clientID, client)
+	startClientSession(clientID, rpc_Client)
+	// client:=init_Client(clientId,rpc_Client)
+	// client.StartSession()
+
 }
