@@ -7,17 +7,16 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"rpc-system/common"
 	"strings"
 	"sync"
 	"time"
-	"rpc-system/common"
 )
 
-// HeartbeatInterval sets how often the client sends keepalives to the server
-const HeartbeatInterval = 5 * time.Second
-
-// KeepAliveTimeout sets how long the client waits for a keepalive response before assuming failure
-const KeepAliveTimeout = 10 * time.Second
+const (
+	HeartbeatInterval = 5 * time.Second
+	KeepAliveTimeout  = 10 * time.Second
+)
 
 // clientSession processes requests from the input channel and handles responses
 func clientSession(clientID, serverID string, client *rpc.Client, requestCh chan common.Request, wg *sync.WaitGroup) {
@@ -76,6 +75,7 @@ func sendHeartbeat(clientID, serverID string, client *rpc.Client, done chan stru
 
 // connectToMasterServer establishes an RPC connection to the server
 func connectToMasterServer() (*rpc.Client, error) {
+
 	client, err := rpc.Dial("tcp", "127.0.0.1:12345") // Connect to server
 	if err != nil {
 		return nil, err
@@ -161,6 +161,7 @@ func main() {
 
 	// Connect to the server
 	client, err := connectToMasterServer()
+
 	if err != nil {
 		log.Fatalf("Error connecting to server: %s", err)
 	}
