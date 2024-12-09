@@ -32,7 +32,9 @@ func getClientIDfromSessionID(sessionID string) string {
 }
 
 type Server struct {
-	sessions map[string]struct {
+	LocalPort string
+	serverID  int
+	sessions  map[string]struct {
 		requestCh   chan common.Request
 		keepaliveCh chan common.Request
 	} // Map of session IDs to channels
@@ -45,23 +47,48 @@ type Server struct {
 	filePath     string // File path to seat map
 }
 
-func NewServer(filePath string) *Server {
-	server := &Server{
-		sessions: make(map[string]struct {
-			requestCh   chan common.Request
-			keepaliveCh chan common.Request
-		}),
-		requests:  make(chan common.Request, 100), // Global processing queue
-		responses: make(map[string]chan common.Response),
-		seats:     make(map[string]Seat),
-		filePath:  filePath,
+func init_Server(numServer int, filePath string) []*Server {
+	servers := make([]*Server, numServer)
+	for i := 0; i < numServer; i++ {
+		servers[i] = &Server{
+			LocalPort: fmt.Sprintf(":%d", 12346+i),
+			serverID:  i,
+			sessions: make(map[string]struct {
+				requestCh   chan common.Request
+				keepaliveCh chan common.Request
+			}),
+			requests:  make(chan common.Request, 100), // Global processing queue
+			responses: make(map[string]chan common.Response),
+			seats:     make(map[string]Seat),
+			filePath:  filePath,
+		}
+		err := servers[i].loadSeats()
+		if err != nil {
+			log.Fatalf("Failed to load seats from file: %s", err)
+		}
+
 	}
-	err := server.loadSeats()
-	if err != nil {
-		log.Fatalf("Failed to load seats from file: %s", err)
-	}
-	return server
+
+	return servers
 }
+
+// func NewServer(filePath string) *Server {
+// 	server := &Server{
+// 		sessions: make(map[string]struct {
+// 			requestCh   chan common.Request
+// 			keepaliveCh chan common.Request
+// 		}),
+// 		requests:  make(chan common.Request, 100), // Global processing queue
+// 		responses: make(map[string]chan common.Response),
+// 		seats:     make(map[string]Seat),
+// 		filePath:  filePath,
+// 	}
+// 	err := server.loadSeats()
+// 	if err != nil {
+// 		log.Fatalf("Failed to load seats from file: %s", err)
+// 	}
+// 	return server
+// }
 
 // loadSeats reads the seat data from a file and categorizes them into available and unavailable seats
 func (s *Server) loadSeats() error {
@@ -85,6 +112,7 @@ func (s *Server) loadSeats() error {
 				Status:   status,
 				ClientID: clientID,
 			}
+
 			if status == "available" {
 				availableSeats = append(availableSeats, seatID)
 			} else {
@@ -314,8 +342,8 @@ func main() {
 	defer lbListener.Close()
 	log.Println("LoadBalancer is running on port 12345")
 
-	// Initialize the server
-	server := NewServer(seatFile)
+	servers := init_Server(1, seatFile)
+	server := servers[0]
 	err := rpc.Register(server)
 	if err != nil {
 		log.Fatalf("Error registering server: %s", err)
@@ -323,12 +351,12 @@ func main() {
 
 	go server.processQueue()
 
-	listener, err := net.Listen("tcp", ":12346")
+	listener, err := net.Listen("tcp", server.LocalPort)
 	if err != nil {
 		log.Fatalf("Error starting server listener: %s", err)
 	}
 	defer listener.Close()
-	log.Println("Server is running on port 12346")
+	log.Printf("Server is running on port %s\n", server.LocalPort)
 
 	// Start a goroutine to handle load balancer requests
 	go func() {
