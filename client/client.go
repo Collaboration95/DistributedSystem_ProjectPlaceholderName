@@ -77,7 +77,7 @@ func (c *Client) sendHeartbeat() {
 				log.Printf("[Client %s] Error sending KeepAlive: %s", c.ID, err)
 				return // Assume server is unreachable and exit
 			}
-			log.Printf("[Client %s] KeepAlive response: %s", c.ID, res.Message)
+			log.Printf("\n[Client %s] KeepAlive response: %s", c.ID, res.Message)
 
 		case <-c.HeartbeatDone:
 			log.Printf("[Client %s] Stopping KeepAlive.", c.ID)
@@ -85,16 +85,6 @@ func (c *Client) sendHeartbeat() {
 		}
 	}
 }
-
-// connectToMasterServer establishes an RPC connection to the server
-// func connectToMasterServer() (*rpc.Client, error) {
-
-// 	client, err := rpc.Dial("tcp", "127.0.0.1:12345") // Connect to server
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return client, nil
-// }
 
 func connectToLoadBalancer(lbAddress string) (string, error) {
 	// Dial the load balancer
@@ -151,7 +141,7 @@ func (c *Client) StartSession() {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Enter your requests (Type 'done' to finish):")
 	for {
-		fmt.Print("Enter SeatID (e.g., 1A): ")
+		fmt.Print("Enter SeatID (e.g., 1A): \n")
 		seatID, _ := reader.ReadString('\n')
 		seatID = strings.TrimSpace(seatID)
 
