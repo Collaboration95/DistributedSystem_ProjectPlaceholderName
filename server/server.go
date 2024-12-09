@@ -7,17 +7,16 @@ import (
 	"net"
 	"net/rpc"
 	"os"
+	"rpc-system/common"
 	"strings"
 	"sync"
 	"time"
-
-	"rpc-system/common"
 )
 
 type Seat struct {
-	SeatID string
-	Status    string
-	ClientID  string
+	SeatID   string
+	Status   string
+	ClientID string
 }
 
 type Server struct {
@@ -25,24 +24,24 @@ type Server struct {
 		requestCh   chan common.Request
 		keepaliveCh chan common.Request
 	} // Map of session IDs to channels
-	requests     chan common.Request             // Global processing queue
-	responses    map[string]chan common.Response // Map of unique request IDs to response channels
-	seats        map[string]Seat               // Shared seat map
-	mu           sync.Mutex                      // Protect shared resources
-	sessionMux   sync.Mutex                      // Protect session map
-	keepaliveMux sync.Mutex                      // Protect keepalive resources
-	filePath   string                         // File path to seat map
+	requests     chan common.Request // Global processing queue
+	responses    map[string]chan common.Response
+	seats        map[string]Seat
+	mu           sync.Mutex
+	sessionMux   sync.Mutex
+	keepaliveMux sync.Mutex
+	filePath     string // File path to seat map
 }
 
 func NewServer(filePath string) *Server {
-	server:= &Server{
+	server := &Server{
 		sessions: make(map[string]struct {
 			requestCh   chan common.Request
 			keepaliveCh chan common.Request
 		}),
 		requests:  make(chan common.Request, 100), // Global processing queue
 		responses: make(map[string]chan common.Response),
-		seats: make(map[string]Seat),
+		seats:     make(map[string]Seat),
 		filePath:  filePath,
 	}
 	err := server.loadSeats()
@@ -54,28 +53,28 @@ func NewServer(filePath string) *Server {
 
 // loadSeats reads the seat data from a file
 func (s *Server) loadSeats() error {
-    file, err := os.Open(s.filePath)
-    if err != nil {
-        return err
-    }
-    defer file.Close()
-    scanner := bufio.NewScanner(file)
-    for scanner.Scan() {
-        line := strings.TrimSpace(scanner.Text())
-        parts := strings.Split(line, ":")
-        if len(parts) == 3 {
-            seatID := strings.ToUpper(strings.TrimSpace(parts[0])) 
-            status := strings.TrimSpace(parts[1])
+	file, err := os.Open(s.filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		parts := strings.Split(line, ":")
+		if len(parts) == 3 {
+			seatID := strings.ToUpper(strings.TrimSpace(parts[0]))
+			status := strings.TrimSpace(parts[1])
 			clientID := strings.TrimSpace(parts[2])
-            s.seats[seatID] = Seat{ 
-				SeatID: seatID,
+			s.seats[seatID] = Seat{
+				SeatID:   seatID,
 				Status:   status,
 				ClientID: clientID,
 			}
-            log.Printf("Loaded seat: %s - %s", seatID, status)
-        }
-    }
-    return scanner.Err()
+			log.Printf("Loaded seat: %s - %s", seatID, status)
+		}
+	}
+	return scanner.Err()
 }
 
 // saveSeats writes the current seat map to a file
@@ -212,56 +211,56 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 }
 
 func (s *Server) processQueue() {
-    for req := range s.requests {
-        responseMessage := ""
-        status := "SUCCESS"
+	for req := range s.requests {
+		responseMessage := ""
+		status := "SUCCESS"
 
-        s.mu.Lock()
-        seatID := strings.ToUpper(strings.TrimSpace(req.SeatID)) // Normalize SeatID
-        if seat, exists := s.seats[seatID]; exists {
-            switch req.Type {
-            case "RESERVE":
-                if seat.Status == "available" {
-                    s.seats[seatID] = Seat{
-						SeatID: req.SeatID,
-                        Status:   "occupied",
-                        ClientID: req.ClientID, 
-                    }
-                    responseMessage = fmt.Sprintf("Seat %s reserved for client %s by %s", seatID, req.ClientID, req.ServerID)
-                    s.saveSeats() // Save the updated seat map
-                } else {
-                    status = "FAILURE"
-                    responseMessage = fmt.Sprintf("Seat %s is already occupied. Client %s by %s", seatID, req.ClientID, req.ServerID)
-                }
-            case "CANCEL":
-                if seat.Status == "occupied" {
-                    s.seats[seatID] = Seat{
-						SeatID: req.SeatID,
-                        Status:   "available",
-                        ClientID: "", 
-                    }
-                    responseMessage = fmt.Sprintf("Reservation for seat %s cancelled by client %s via %s", seatID, req.ClientID, req.ServerID)
-                    s.saveSeats() // Save the updated seat map
-                } else {
-                    status = "FAILURE"
-                    responseMessage = fmt.Sprintf("Seat %s is not occupied. Cannot cancel. Client %s by %s", seatID, req.ClientID, req.ServerID)
-                }
-            default:
-                status = "FAILURE"
-                responseMessage = fmt.Sprintf("Invalid request type %s for seat %s by client %s", req.Type, seatID, req.ClientID)
-            }
-        } else {
-            status = "FAILURE"
-            responseMessage = fmt.Sprintf("Seat %s does not exist. Client %s by %s", seatID, req.ClientID, req.ServerID)
-        }
-        s.mu.Unlock()
+		s.mu.Lock()
+		seatID := strings.ToUpper(strings.TrimSpace(req.SeatID)) // Normalize SeatID
+		if seat, exists := s.seats[seatID]; exists {
+			switch req.Type {
+			case "RESERVE":
+				if seat.Status == "available" {
+					s.seats[seatID] = Seat{
+						SeatID:   req.SeatID,
+						Status:   "occupied",
+						ClientID: req.ClientID,
+					}
+					responseMessage = fmt.Sprintf("Seat %s reserved for client %s by %s", seatID, req.ClientID, req.ServerID)
+					s.saveSeats() // Save the updated seat map
+				} else {
+					status = "FAILURE"
+					responseMessage = fmt.Sprintf("Seat %s is already occupied. Client %s by %s", seatID, req.ClientID, req.ServerID)
+				}
+			case "CANCEL":
+				if seat.Status == "occupied" {
+					s.seats[seatID] = Seat{
+						SeatID:   req.SeatID,
+						Status:   "available",
+						ClientID: "",
+					}
+					responseMessage = fmt.Sprintf("Reservation for seat %s cancelled by client %s via %s", seatID, req.ClientID, req.ServerID)
+					s.saveSeats() // Save the updated seat map
+				} else {
+					status = "FAILURE"
+					responseMessage = fmt.Sprintf("Seat %s is not occupied. Cannot cancel. Client %s by %s", seatID, req.ClientID, req.ServerID)
+				}
+			default:
+				status = "FAILURE"
+				responseMessage = fmt.Sprintf("Invalid request type %s for seat %s by client %s", req.Type, seatID, req.ClientID)
+			}
+		} else {
+			status = "FAILURE"
+			responseMessage = fmt.Sprintf("Seat %s does not exist. Client %s by %s", seatID, req.ClientID, req.ServerID)
+		}
+		s.mu.Unlock()
 
-        log.Printf("[%s] %s", status, responseMessage)
+		log.Printf("[%s] %s", status, responseMessage)
 
-        if responseCh, exists := s.responses[req.ClientID]; exists {
-            responseCh <- common.Response{Status: status, Message: responseMessage}
-        }
-    }
+		if responseCh, exists := s.responses[req.ClientID]; exists {
+			responseCh <- common.Response{Status: status, Message: responseMessage}
+		}
+	}
 }
 
 func main() {
