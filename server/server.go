@@ -27,6 +27,10 @@ type Seat struct {
 	ClientID string
 }
 
+func getClientIDfromSessionID(sessionID string) string {
+	return strings.Split(sessionID, "-")[0]
+}
+
 type Server struct {
 	sessions map[string]struct {
 		requestCh   chan common.Request
@@ -59,7 +63,7 @@ func NewServer(filePath string) *Server {
 	return server
 }
 
-// loadSeats reads the seat data from a file
+// loadSeats reads the seat data from a file and categorizes them into available and unavailable seats
 func (s *Server) loadSeats() error {
 	file, err := os.Open(s.filePath)
 	if err != nil {
@@ -67,6 +71,8 @@ func (s *Server) loadSeats() error {
 	}
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
+	var availableSeats []string
+	var unavailableSeats []string
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		parts := strings.Split(line, ":")
@@ -79,9 +85,15 @@ func (s *Server) loadSeats() error {
 				Status:   status,
 				ClientID: clientID,
 			}
-			log.Printf("Loaded seat: %s - %s", seatID, status)
+			if status == "available" {
+				availableSeats = append(availableSeats, seatID)
+			} else {
+				unavailableSeats = append(unavailableSeats, seatID)
+			}
 		}
 	}
+	log.Printf("Available seats: %v", availableSeats)
+	log.Printf("Unavailable seats: %v", unavailableSeats)
 	return scanner.Err()
 }
 
@@ -142,7 +154,7 @@ func (s *Server) serverSession(sessionID string, requestCh chan common.Request, 
 		case req := <-keepaliveCh:
 			if req.Type == "KEEPALIVE" {
 				lastHeartbeat = time.Now()
-				log.Printf("Session %s received KeepAlive from client %s", sessionID, req.ClientID)
+				log.Printf("Session %s received KeepAlive from %s", sessionID, req.ClientID)
 
 				// Reset the timer on a KeepAlive
 				if !timer.Stop() {
@@ -242,6 +254,11 @@ func (s *Server) processQueue() {
 				}
 			case "CANCEL":
 				if seat.Status == "occupied" {
+					if getClientIDfromSessionID(req.ClientID) != getClientIDfromSessionID(seat.ClientID) {
+						status = "FAILURE"
+						responseMessage = fmt.Sprintf("Seat %s is occupied by another client %s. Cannot cancel. Client %s by %s", seatID, seat.ClientID, req.ClientID, req.ServerID)
+						break
+					}
 					s.seats[seatID] = Seat{
 						SeatID:   req.SeatID,
 						Status:   "available",
