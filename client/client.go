@@ -20,6 +20,7 @@ type Client struct {
 	RequestCh     chan common.Request
 	HeartbeatDone chan struct{}
 	WaitGroup     sync.WaitGroup
+	LeaderPort    string
 }
 
 const (
@@ -86,13 +87,54 @@ func (c *Client) sendHeartbeat() {
 }
 
 // connectToMasterServer establishes an RPC connection to the server
-func connectToMasterServer() (*rpc.Client, error) {
+// func connectToMasterServer() (*rpc.Client, error) {
 
-	client, err := rpc.Dial("tcp", "127.0.0.1:12345") // Connect to server
+// 	client, err := rpc.Dial("tcp", "127.0.0.1:12345") // Connect to server
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return client, nil
+// }
+
+func connectToLoadBalancer(lbAddress string) (string, error) {
+	// Dial the load balancer
+	lbClient, err := rpc.Dial("tcp", lbAddress)
 	if err != nil {
-		return nil, err
+		return "", fmt.Errorf("failed to connect to load balancer: %w", err)
 	}
-	return client, nil
+	defer lbClient.Close()
+
+	// Prepare request and response
+	req := &common.Request{}
+	res := &common.Response{}
+
+	// Call LoadBalancer.GetLeaderIP
+	err = lbClient.Call("LoadBalancer.GetLeaderIP", req, res)
+	if err != nil {
+		return "", fmt.Errorf("failed to call GetLeaderIP on load balancer: %w", err)
+	}
+
+	if res.Status != "SUCCESS" {
+		return "", fmt.Errorf("load balancer failed to provide leader IP: %s", res.Message)
+	}
+
+	return res.Message, nil
+}
+
+func connectToMasterServer() (*rpc.Client, error) {
+	// First, connect to the load balancer (which is running on :12345 in your example)
+	leaderAddress, err := connectToLoadBalancer("127.0.0.1:12345")
+	if err != nil {
+		return nil, fmt.Errorf("error getting leader from load balancer: %w", err)
+	}
+	fmt.Println("=---------ß------Leader Address is ", leaderAddress)
+	// Now dial the leader server returned by the load balancer
+	rpcClient, err := rpc.Dial("tcp", leaderAddress)
+	if err != nil {
+		return nil, fmt.Errorf("error connecting to leader server %s: %w", leaderAddress, err)
+	}
+
+	return rpcClient, nil
 }
 
 func (c *Client) StartSession() {
