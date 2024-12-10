@@ -14,13 +14,15 @@ import (
 )
 
 const (
-	seatFile = "seats.txt"
+	seatFile   = "seats.txt"
+	numServers = 3
 )
 
 var localSeats = make(map[string]Seat)
 
 type LoadBalancer struct {
 	LeaderPort string
+	LeaderID   string // Add the serverID of the leader
 }
 
 type Seat struct {
@@ -305,41 +307,55 @@ func (s *Server) processQueue() {
 }
 
 func (lb *LoadBalancer) GetLeaderIP(req *common.Request, res *common.Response) error {
-	fmt.Println("Load balancer received request for leader IP sending back leader port")
+	fmt.Println("Load balancer received request for leader info, sending back leader details")
 	res.Status = "SUCCESS"
-	res.Message = lb.LeaderPort
+	res.Message = fmt.Sprintf("%s,%s", lb.LeaderPort, lb.LeaderID) // Return port and ID
 	return nil
 }
 
 func main() {
-
-	// loadseatData()
+	// Load the seat data from the file
 	loadSeats(seatFile)
 
 	// Initialize servers
-	servers := init_Server(1, seatFile)
-	server := servers[0]
+	servers := init_Server(numServers, seatFile)
 
-	// Register the server with the RPC system
-	err := rpc.Register(server)
-	if err != nil {
-		log.Fatalf("Error registering server: %s", err)
+	// Register and start each server
+	for _, server := range servers {
+		// Register the server with a unique name
+		serverName := fmt.Sprintf("Server%d", server.serverID)
+		err := rpc.RegisterName(serverName, server)
+		if err != nil {
+			log.Fatalf("Error registering %s: %s", serverName, err)
+		}
+
+		// Start the server's request processing queue
+		go server.processQueue()
+
+		// Start the server listener
+		go func(s *Server) {
+			listener, err := net.Listen("tcp", s.LocalPort)
+			if err != nil {
+				log.Fatalf("Error starting %s on port %s: %s", serverName, s.LocalPort, err)
+			}
+			defer listener.Close()
+			log.Printf("%s is running on port %s\n", serverName, s.LocalPort)
+
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					log.Printf("%s connection error: %s", serverName, err)
+					continue
+				}
+				go rpc.ServeConn(conn)
+			}
+		}(server)
 	}
-
-	// Start the server's request processing queue
-	go server.processQueue()
-
-	// Start the server listener first
-	listener, err := net.Listen("tcp", server.LocalPort)
-	if err != nil {
-		log.Fatalf("Error starting server listener: %s", err)
-	}
-	defer listener.Close()
-	log.Printf("Server is running on port %s\n", server.LocalPort)
 
 	// Now initialize the load balancer
 	loadBalancer := &LoadBalancer{
-		LeaderPort: server.LocalPort, // Pointing to the running server
+		LeaderPort: servers[0].LocalPort,   // Initially pointing to the first server
+		LeaderID:   fmt.Sprintf("Server0"), // Initially pointing to the first server's ID
 	}
 
 	errLoadBalancer := rpc.Register(loadBalancer)
@@ -360,20 +376,13 @@ func main() {
 		for {
 			conn, err := lbListener.Accept()
 			if err != nil {
-				log.Println("Load Balancer Connection error:", err)
+				log.Println("Load Balancer connection error:", err)
 				continue
 			}
 			go rpc.ServeConn(conn)
 		}
 	}()
 
-	// Main loop to handle server requests
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Println("Server Connection error:", err)
-			continue
-		}
-		go rpc.ServeConn(conn)
-	}
+	// Prevent main from exiting
+	select {}
 }
