@@ -32,9 +32,11 @@ type Seat struct {
 }
 
 type Server struct {
-	LocalPort string
-	serverID  int
-	sessions  map[string]struct {
+	LocalPort  string
+	serverID   int
+	OutgoingCh []chan string
+	IncomingCh chan string
+	sessions   map[string]struct {
 		requestCh   chan common.Request
 		keepaliveCh chan common.Request
 	} // Map of session IDs to channels
@@ -57,15 +59,26 @@ func init_Server(numServer int, filePath string) []*Server {
 				requestCh   chan common.Request
 				keepaliveCh chan common.Request
 			}),
-			requests:  make(chan common.Request, 100), // Global processing queue
-			responses: make(map[string]chan common.Response),
-			seats:     make(map[string]Seat),
-			filePath:  filePath,
+			IncomingCh: make(chan string),
+			OutgoingCh: make([]chan string, numServer),
+			requests:   make(chan common.Request, 100), // Global processing queue
+			responses:  make(map[string]chan common.Response),
+			seats:      make(map[string]Seat),
+			filePath:   filePath,
 		}
+
 		// Load the seat data from the file
 		servers[i].seats = localSeats
 	}
 
+	// Connect each server to every other server
+	for i, server := range servers {
+		for j, otherServer := range servers {
+			if i != j {
+				server.OutgoingCh[j] = otherServer.IncomingCh
+			}
+		}
+	}
 	return servers
 }
 
@@ -241,6 +254,31 @@ func (s *Server) processQueue() {
 	}
 }
 
+func (s *Server) sendHeartbeats(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		for i, targetCh := range s.OutgoingCh {
+			if i == s.serverID {
+				continue
+			}
+			select {
+			case targetCh <- fmt.Sprintf("Heartbeat from Leader %d", s.serverID):
+				// Successfully sent heartbeat
+			default:
+				log.Printf("Server %d: Failed to send heartbeat to Server %d (buffer full)", s.serverID, i)
+			}
+		}
+	}
+}
+
+func (s *Server) processHeartbeats() {
+	for msg := range s.IncomingCh {
+		log.Printf("Server %d received: %s", s.serverID, msg)
+	}
+}
+
 func (lb *LoadBalancer) GetLeaderIP(req *common.Request, res *common.Response) error {
 	fmt.Println("Load balancer received request for leader info, sending back leader details")
 	res.Status = "SUCCESS"
@@ -286,6 +324,13 @@ func main() {
 			}
 		}(server)
 	}
+
+	for _, server := range servers {
+		go server.processHeartbeats()
+	}
+
+	// Start the heartbeat sender for the leader (assume servers[0] is the leader)
+	go servers[0].sendHeartbeats(2 * time.Second)
 
 	// Now initialize the load balancer
 	loadBalancer := &LoadBalancer{
