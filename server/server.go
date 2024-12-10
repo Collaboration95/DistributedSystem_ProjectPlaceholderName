@@ -11,13 +11,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/exp/rand"
 )
 
 const (
 	seatFile   = "seats.txt"
-	numServers = 5
-	timeout    = 10 * time.Second
-	interval   = 5 * time.Second
+	numServers = 3
+	timeout    = 5 * time.Second
+	interval   = 2 * time.Second
+	maxTimeout = 300 * time.Millisecond
+	minTimeout = 150 * time.Millisecond
 )
 
 type InternalMessage struct {
@@ -34,6 +38,8 @@ const (
 	Leader
 )
 
+var loadBalancer = &LoadBalancer{}
+
 var localSeats = make(map[string]Seat)
 
 type LoadBalancer struct {
@@ -49,9 +55,11 @@ type Seat struct {
 
 type Server struct {
 	role          RaftState
+	votes         int
 	votedFor      int
 	term          int
 	lastHeartbeat time.Time
+	LeaderPort    string
 	LocalPort     string
 	serverID      int
 	isLeader      bool
@@ -77,7 +85,9 @@ func init_Server(numServer int, filePath string) []*Server {
 		servers[i] = &Server{
 			LocalPort: fmt.Sprintf(":%d", 12346+i),
 			serverID:  i,
-			isLeader:  i == 0, // first server i sleader
+			role:      Follower,
+			term:      0,
+			votedFor:  -1,
 			sessions: make(map[string]struct {
 				requestCh   chan common.Request
 				keepaliveCh chan common.Request
@@ -89,6 +99,7 @@ func init_Server(numServer int, filePath string) []*Server {
 			seats:      make(map[string]Seat),
 			filePath:   filePath,
 			isAlive:    true,
+			votes:      0,
 		}
 
 		// Load the seat data from the file
@@ -289,13 +300,12 @@ func (s *Server) handleHeartbeats() {
 		case <-ticker.C:
 			// Check if the server is alive
 			if !s.isAlive {
-				// If the server is dead, do nothing.
 				continue
 			}
 
-			// Ensure only the current leader sends heartbeats
-			if s.isLeader {
-				fmt.Printf("Server %d sending heartbeats \n", s.serverID)
+			if s.role == Leader {
+				// Leader sends heartbeats
+				fmt.Printf("Server %d (Term %d) sending heartbeats\n", s.serverID, s.term)
 
 				message := InternalMessage{
 					SourceId: s.serverID,
@@ -316,26 +326,169 @@ func (s *Server) handleHeartbeats() {
 					}
 				}
 			} else {
-				// This is a follower server
-				if time.Since(lastHeartbeat) > timeout {
-					// If no heartbeat has been received within 'timeout'
-					if s.isAlive {
-						log.Printf("Server %d: No heartbeat received within timeout period! Potential leader failure.", s.serverID)
-						// Optional: Trigger leader election or recovery mechanism
+				// This server is a follower or candidate
+				localDelay := time.Duration(rand.Intn(int(maxTimeout-minTimeout))) + minTimeout
+
+				if time.Since(lastHeartbeat) > (timeout + localDelay) {
+					// No heartbeat received within timeout: start election
+					log.Printf("Server %d: No heartbeat received. Starting election (Term %d -> Term %d)", s.serverID, s.term, s.term+1)
+
+					// Step 2: Become a candidate
+					s.term += 1
+					s.role = Candidate
+					s.votedFor = s.serverID
+					s.votes = 1 // vote for itself
+					fmt.Printf("\nServer %d ENTERING CANDIDATE TIME \n\n", s.serverID)
+					// Send RequestVote RPC to other servers
+					requestVoteMessage := InternalMessage{
+						SourceId: s.serverID,
+						Type:     "REQUESTVOTE",
+						Data:     s.term,
 					}
+
+					// Broadcast REQUESTVOTE to all other servers
+					for i := range s.OutgoingCh {
+						if i != s.serverID {
+							s.OutgoingCh[i] <- requestVoteMessage
+						}
+					}
+					// resetting hearbeat
+					lastHeartbeat = time.Now()
 				}
 			}
 
 		case msg := <-s.IncomingCh:
-			// If the server is not alive, ignore incoming messages
 			if !s.isAlive {
 				continue
 			}
 
-			// Only process HEARTBEAT messages
-			if msg.Type == "HEARTBEAT" {
+			switch msg.Type {
+			case "HEARTBEAT":
 				fmt.Printf("Server %d received %s from Server %d\n", s.serverID, msg.Type, msg.SourceId)
-				lastHeartbeat = time.Now() // Update last heartbeat time
+				lastHeartbeat = time.Now()
+
+				// If we receive a heartbeat and we're a candidate or follower, we might reset to follower if term is adequate
+				// For simplicity, assume the leader always has equal or higher term.
+				if s.role == Candidate {
+					s.role = Follower
+					s.votedFor = -1
+					// Adjust term logic if needed
+				}
+
+			case "REQUESTVOTE":
+				candidateID := msg.SourceId
+				candidateTerm := msg.Data.(int)
+
+				if candidateTerm > s.term {
+					// Higher term: become follower and grant vote
+					s.term = candidateTerm
+					s.role = Follower
+					s.votedFor = candidateID
+					fmt.Printf("Server %d granted vote to Server %d for Term %d\n", s.serverID, candidateID, candidateTerm)
+
+					// Send vote response with true
+					voteResponse := InternalMessage{
+						SourceId: s.serverID,
+						Type:     "VOTERESPONSE",
+						Data: map[string]interface{}{
+							"term":        s.term,
+							"voteGranted": true,
+						},
+					}
+					s.OutgoingCh[candidateID] <- voteResponse
+
+				} else if candidateTerm == s.term {
+					// Same term, check if already voted
+					if s.votedFor == -1 || s.votedFor == candidateID {
+						// Grant vote
+						s.votedFor = candidateID
+						fmt.Printf("Server %d granted vote to Server %d for Term %d\n", s.serverID, candidateID, candidateTerm)
+
+						voteResponse := InternalMessage{
+							SourceId: s.serverID,
+							Type:     "VOTERESPONSE",
+							Data: map[string]interface{}{
+								"term":        s.term,
+								"voteGranted": true,
+							},
+						}
+						s.OutgoingCh[candidateID] <- voteResponse
+					} else {
+						// Deny vote because already voted for someone else
+						fmt.Printf("Server %d denied vote to Server %d for Term %d (already voted for Server %d)\n", s.serverID, candidateID, candidateTerm, s.votedFor)
+
+						voteResponse := InternalMessage{
+							SourceId: s.serverID,
+							Type:     "VOTERESPONSE",
+							Data: map[string]interface{}{
+								"term":        s.term,
+								"voteGranted": false,
+							},
+						}
+						s.OutgoingCh[candidateID] <- voteResponse
+					}
+
+				} else {
+					// Deny vote because the candidate's term is stale
+					fmt.Printf("Server %d denied vote to Server %d for Term %d (stale term, current Term %d)\n", s.serverID, candidateID, candidateTerm, s.term)
+
+					voteResponse := InternalMessage{
+						SourceId: s.serverID,
+						Type:     "VOTERESPONSE",
+						Data: map[string]interface{}{
+							"term":        s.term,
+							"voteGranted": false,
+						},
+					}
+					s.OutgoingCh[candidateID] <- voteResponse
+				}
+
+				// Handle vote requests here if desired
+				// This is optional since we're only asked to implement sendRequestVoteRPC logic.
+				// In a full implementation, you'd compare terms and possibly grant votes.
+			case "VOTERESPONSE":
+				// Handle incoming vote responses
+				if s.role == Candidate {
+					respData := msg.Data.(map[string]interface{})
+					responseTerm := respData["term"].(int)
+					voteGranted := respData["voteGranted"].(bool)
+
+					// If the responder's term is higher, step down to follower
+					if responseTerm > s.term {
+						fmt.Printf("Server %d received VOTERESPONSE with higher term %d. Stepping down to Follower.\n", s.serverID, responseTerm)
+						s.term = responseTerm
+						s.role = Follower
+						s.votedFor = -1
+						return
+					}
+
+					// If the response term matches our current term
+					if responseTerm == s.term {
+						if voteGranted {
+							s.votes++
+							fmt.Printf("Server %d received vote. Total votes: %d\n", s.serverID, s.votes)
+
+							// Check if we have the majority
+							if s.votes > len(s.OutgoingCh)/2 {
+								s.role = Leader
+								s.isLeader = true
+								s.votedFor = -1
+								update_LoadBalancer(s.LocalPort, fmt.Sprintf("Server%d", s.serverID))
+
+								fmt.Printf("Server %d became Leader for Term %d\n", s.serverID, s.term)
+								// Start sending heartbeats immediately as leader
+							}
+						} else {
+							// Vote not granted
+							fmt.Printf("Server %d received a negative vote response for Term %d.\n", s.serverID, responseTerm)
+							// No specific action required for a negative vote unless you want to handle tie situations.
+						}
+					} else {
+						// If the response is from an older term, ignore it
+						fmt.Printf("Server %d received a stale VOTERESPONSE (term %d < current %d). Ignoring.\n", s.serverID, responseTerm, s.term)
+					}
+				}
+
 			}
 		}
 	}
@@ -357,6 +510,12 @@ func init_LoadBalancer(servers []*Server) *LoadBalancer {
 		}
 	}
 	return lb
+}
+
+func update_LoadBalancer(LeaderPort string, LeaderID string) {
+	fmt.Printf("Updating LoadBalancer with new leader info: %s, %s\n", LeaderPort, LeaderID)
+	loadBalancer.LeaderPort = LeaderPort
+	loadBalancer.LeaderID = LeaderID
 }
 
 func main() {
@@ -402,7 +561,8 @@ func main() {
 		go server.handleHeartbeats()
 	}
 
-	loadBalancer := init_LoadBalancer(servers)
+	// loadBalancer := init_LoadBalancer(servers)
+	time.Sleep(5 * time.Second)
 
 	errLoadBalancer := rpc.Register(loadBalancer)
 	if errLoadBalancer != nil {
