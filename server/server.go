@@ -15,10 +15,16 @@ import (
 
 const (
 	seatFile   = "seats.txt"
-	numServers = 3
-	timeout    = 15 * time.Second
-	interval   = 10 * time.Second
+	numServers = 5
+	timeout    = 100 * time.Second
+	interval   = 5 * time.Second
 )
+
+type InternalMessage struct {
+	SourceId int
+	Type     string
+	Data     interface{}
+}
 
 var localSeats = make(map[string]Seat)
 
@@ -37,8 +43,8 @@ type Server struct {
 	LocalPort  string
 	serverID   int
 	isLeader   bool
-	OutgoingCh []chan string
-	IncomingCh chan string
+	OutgoingCh []chan InternalMessage
+	IncomingCh chan InternalMessage
 	sessions   map[string]struct {
 		requestCh   chan common.Request
 		keepaliveCh chan common.Request
@@ -63,8 +69,8 @@ func init_Server(numServer int, filePath string) []*Server {
 				requestCh   chan common.Request
 				keepaliveCh chan common.Request
 			}),
-			IncomingCh: make(chan string, 100),
-			OutgoingCh: make([]chan string, numServer),
+			IncomingCh: make(chan InternalMessage, 100),
+			OutgoingCh: make([]chan InternalMessage, numServer),
 			requests:   make(chan common.Request, 100), // Global processing queue
 			responses:  make(map[string]chan common.Response),
 			seats:      make(map[string]Seat),
@@ -267,32 +273,43 @@ func (s *Server) handleHeartbeats() {
 	for {
 		select {
 		case <-ticker.C:
+			// Ensure only the current leader sends heartbeats
 			if s.isLeader {
-				// Leader sends heartbeats
-				fmt.Printf("Server %d sending heartbeats\n", s.serverID)
-				for i, targetCh := range s.OutgoingCh {
-					if i == s.serverID {
-						continue // Skip sending heartbeat to itself
-					}
+				fmt.Printf("Server %d sending heartbeats \n", s.serverID)
 
+				message := InternalMessage{
+					SourceId: s.serverID,
+					Type:     "HEARTBEAT",
+					Data:     fmt.Sprintf("Heartbeat from Leader %d", s.serverID),
+				}
+
+				// Improve heartbeat sending logic
+				for i := range s.OutgoingCh {
+					if i == s.serverID {
+						continue
+					}
 					select {
-					case targetCh <- fmt.Sprintf("Heartbeat from Leader %d", s.serverID):
-						// Successfully sent heartbeat
+					case s.OutgoingCh[i] <- message:
+						// Message sent successfully
 					default:
-						log.Printf("Server %d: Failed to send heartbeat to Server %d (buffer full)", s.serverID, i)
+						// Log or handle channel blocking
+						fmt.Printf("Failed to send heartbeat to server %d (channel might be full)\n", i)
 					}
 				}
 			} else {
-				// Non-leader checks for timeout
+				// Non-leader timeout check
 				if time.Since(lastHeartbeat) > timeout {
-					log.Printf("Server %d: No heartbeat received within timeout period!", s.serverID)
-					lastHeartbeat = time.Now() // Reset timeout to avoid repeated logs
+					log.Printf("Server %d: No heartbeat received within timeout period! Potential leader failure.", s.serverID)
+					// Optional: Trigger leader election or recovery mechanism
 				}
 			}
+
 		case msg := <-s.IncomingCh:
-			// Process received heartbeats
-			log.Printf("Server %d received: %s", s.serverID, msg)
-			lastHeartbeat = time.Now() // Update the last heartbeat time
+			// Only process and update lastHeartbeat for HEARTBEAT messages
+			if msg.Type == "HEARTBEAT" {
+				fmt.Printf("Server %d received %s from Server %d\n", s.serverID, msg.Type, msg.SourceId)
+				lastHeartbeat = time.Now() // Update last heartbeat time
+			}
 		}
 	}
 }
@@ -334,10 +351,6 @@ func main() {
 		// Start the server's request processing queue
 		go server.processQueue()
 
-		for _, server := range servers {
-			go server.handleHeartbeats()
-		}
-
 		// Start the server listener
 		go func(s *Server) {
 			listener, err := net.Listen("tcp", s.LocalPort)
@@ -356,6 +369,10 @@ func main() {
 				go rpc.ServeConn(conn)
 			}
 		}(server)
+	}
+
+	for _, server := range servers {
+		go server.handleHeartbeats()
 	}
 
 	loadBalancer := init_LoadBalancer(servers)
