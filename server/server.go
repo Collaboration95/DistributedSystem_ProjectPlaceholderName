@@ -304,6 +304,17 @@ func (lb *LoadBalancer) GetLeaderIP(req *common.Request, res *common.Response) e
 	return nil
 }
 
+func init_LoadBalancer(servers []*Server) *LoadBalancer {
+	lb := &LoadBalancer{}
+	for i, server := range servers {
+		if server.isLeader {
+			lb.LeaderPort = server.LocalPort
+			lb.LeaderID = fmt.Sprintf("Server%d", i)
+		}
+	}
+	return lb
+}
+
 func main() {
 	// Load the seat data from the file
 	loadSeats(seatFile)
@@ -346,11 +357,8 @@ func main() {
 			}
 		}(server)
 	}
-	// Now initialize the load balancer
-	loadBalancer := &LoadBalancer{
-		LeaderPort: servers[0].LocalPort,
-		LeaderID:   fmt.Sprintf("Server0"),
-	}
+
+	loadBalancer := init_LoadBalancer(servers)
 
 	errLoadBalancer := rpc.Register(loadBalancer)
 	if errLoadBalancer != nil {
