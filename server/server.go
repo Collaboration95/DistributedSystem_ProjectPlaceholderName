@@ -17,6 +17,8 @@ const (
 	seatFile = "seats.txt"
 )
 
+var localSeats = make(map[string]Seat)
+
 type LoadBalancer struct {
 	LeaderPort string
 }
@@ -62,44 +64,25 @@ func init_Server(numServer int, filePath string) []*Server {
 			seats:     make(map[string]Seat),
 			filePath:  filePath,
 		}
-		err := servers[i].loadSeats()
-		if err != nil {
-			log.Fatalf("Failed to load seats from file: %s", err)
-		}
 
+		// Load the seat data from the file
+		servers[i].seats = localSeats
 	}
 
 	return servers
 }
 
-// func NewServer(filePath string) *Server {
-// 	server := &Server{
-// 		sessions: make(map[string]struct {
-// 			requestCh   chan common.Request
-// 			keepaliveCh chan common.Request
-// 		}),
-// 		requests:  make(chan common.Request, 100), // Global processing queue
-// 		responses: make(map[string]chan common.Response),
-// 		seats:     make(map[string]Seat),
-// 		filePath:  filePath,
-// 	}
-// 	err := server.loadSeats()
-// 	if err != nil {
-// 		log.Fatalf("Failed to load seats from file: %s", err)
-// 	}
-// 	return server
-// }
-
-// loadSeats reads the seat data from a file and categorizes them into available and unavailable seats
-func (s *Server) loadSeats() error {
-	file, err := os.Open(s.filePath)
+func loadSeats(filePath string) {
+	file, err := os.Open(filePath)
 	if err != nil {
-		return err
+		log.Fatalf("Error opening file %s: %s", filePath, err)
+
 	}
 	defer file.Close()
+
 	scanner := bufio.NewScanner(file)
-	var availableSeats []string
-	var unavailableSeats []string
+	var seats []Seat
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		parts := strings.Split(line, ":")
@@ -107,22 +90,25 @@ func (s *Server) loadSeats() error {
 			seatID := strings.ToUpper(strings.TrimSpace(parts[0]))
 			status := strings.TrimSpace(parts[1])
 			clientID := strings.TrimSpace(parts[2])
-			s.seats[seatID] = Seat{
+
+			seat := Seat{
 				SeatID:   seatID,
 				Status:   status,
 				ClientID: clientID,
 			}
-
-			if status == "available" {
-				availableSeats = append(availableSeats, seatID)
-			} else {
-				unavailableSeats = append(unavailableSeats, seatID)
-			}
+			seats = append(seats, seat)
 		}
 	}
-	log.Printf("Available seats: %v", availableSeats)
-	log.Printf("Unavailable seats: %v", unavailableSeats)
-	return scanner.Err()
+
+	if err := scanner.Err(); err != nil {
+		log.Fatalf("Error reading file %s: %s", filePath, err)
+	}
+
+	localSeats = make(map[string]Seat)
+	for _, seat := range seats {
+		localSeats[seat.SeatID] = seat
+	}
+	log.Println("Seats loaded from file.")
 }
 
 // saveSeats writes the current seat map to a file
@@ -326,7 +312,9 @@ func (lb *LoadBalancer) GetLeaderIP(req *common.Request, res *common.Response) e
 }
 
 func main() {
-	const seatFile = "seats.txt"
+
+	// loadseatData()
+	loadSeats(seatFile)
 
 	// Initialize servers
 	servers := init_Server(1, seatFile)
