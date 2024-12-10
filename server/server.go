@@ -16,7 +16,7 @@ import (
 const (
 	seatFile   = "seats.txt"
 	numServers = 5
-	timeout    = 100 * time.Second
+	timeout    = 10 * time.Second
 	interval   = 5 * time.Second
 )
 
@@ -25,6 +25,14 @@ type InternalMessage struct {
 	Type     string
 	Data     interface{}
 }
+
+type RaftState int
+
+const (
+	Follower RaftState = iota
+	Candidate
+	Leader
+)
 
 var localSeats = make(map[string]Seat)
 
@@ -40,12 +48,16 @@ type Seat struct {
 }
 
 type Server struct {
-	LocalPort  string
-	serverID   int
-	isLeader   bool
-	OutgoingCh []chan InternalMessage
-	IncomingCh chan InternalMessage
-	sessions   map[string]struct {
+	role          RaftState
+	votedFor      int
+	term          int
+	lastHeartbeat time.Time
+	LocalPort     string
+	serverID      int
+	isLeader      bool
+	OutgoingCh    []chan InternalMessage
+	IncomingCh    chan InternalMessage
+	sessions      map[string]struct {
 		requestCh   chan common.Request
 		keepaliveCh chan common.Request
 	} // Map of session IDs to channels
@@ -56,6 +68,7 @@ type Server struct {
 	sessionMux   sync.Mutex
 	keepaliveMux sync.Mutex
 	filePath     string // File path to seat map
+	isAlive      bool
 }
 
 func init_Server(numServer int, filePath string) []*Server {
@@ -75,6 +88,7 @@ func init_Server(numServer int, filePath string) []*Server {
 			responses:  make(map[string]chan common.Response),
 			seats:      make(map[string]Seat),
 			filePath:   filePath,
+			isAlive:    true,
 		}
 
 		// Load the seat data from the file
@@ -273,6 +287,12 @@ func (s *Server) handleHeartbeats() {
 	for {
 		select {
 		case <-ticker.C:
+			// Check if the server is alive
+			if !s.isAlive {
+				// If the server is dead, do nothing.
+				continue
+			}
+
 			// Ensure only the current leader sends heartbeats
 			if s.isLeader {
 				fmt.Printf("Server %d sending heartbeats \n", s.serverID)
@@ -283,7 +303,7 @@ func (s *Server) handleHeartbeats() {
 					Data:     fmt.Sprintf("Heartbeat from Leader %d", s.serverID),
 				}
 
-				// Improve heartbeat sending logic
+				// Send heartbeat to other servers
 				for i := range s.OutgoingCh {
 					if i == s.serverID {
 						continue
@@ -292,20 +312,27 @@ func (s *Server) handleHeartbeats() {
 					case s.OutgoingCh[i] <- message:
 						// Message sent successfully
 					default:
-						// Log or handle channel blocking
 						fmt.Printf("Failed to send heartbeat to server %d (channel might be full)\n", i)
 					}
 				}
 			} else {
-				// Non-leader timeout check
+				// This is a follower server
 				if time.Since(lastHeartbeat) > timeout {
-					log.Printf("Server %d: No heartbeat received within timeout period! Potential leader failure.", s.serverID)
-					// Optional: Trigger leader election or recovery mechanism
+					// If no heartbeat has been received within 'timeout'
+					if s.isAlive {
+						log.Printf("Server %d: No heartbeat received within timeout period! Potential leader failure.", s.serverID)
+						// Optional: Trigger leader election or recovery mechanism
+					}
 				}
 			}
 
 		case msg := <-s.IncomingCh:
-			// Only process and update lastHeartbeat for HEARTBEAT messages
+			// If the server is not alive, ignore incoming messages
+			if !s.isAlive {
+				continue
+			}
+
+			// Only process HEARTBEAT messages
 			if msg.Type == "HEARTBEAT" {
 				fmt.Printf("Server %d received %s from Server %d\n", s.serverID, msg.Type, msg.SourceId)
 				lastHeartbeat = time.Now() // Update last heartbeat time
