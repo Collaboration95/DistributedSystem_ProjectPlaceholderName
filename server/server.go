@@ -282,9 +282,11 @@ func (s *Server) processQueue() {
 				}
 			case "CANCEL":
 				if seat.Status == "occupied" {
-					if getClientIDfromSessionID(req.ClientID) != getClientIDfromSessionID(seat.ClientID) {
+					requestingClientID := getClientIDfromSessionID(req.ClientID)
+					occupyingClientID := getClientIDfromSessionID(seat.ClientID)
+					if requestingClientID != occupyingClientID {
 						status = "FAILURE"
-						responseMessage = fmt.Sprintf("Seat %s is occupied by another client %s. Cannot cancel. Client %s by %s", seatID, seat.ClientID, req.ClientID, req.ServerID)
+						responseMessage = fmt.Sprintf("Seat %s is occupied by another client %s. Cannot cancel", seatID, seat.ClientID)
 						break
 					}
 					s.seats[seatID] = Seat{
@@ -326,8 +328,30 @@ func (lb *LoadBalancer) GetLeaderIP(req *common.Request, res *common.Response) e
 func main() {
 	const seatFile = "seats.txt"
 
+	// Initialize servers
+	servers := init_Server(1, seatFile)
+	server := servers[0]
+
+	// Register the server with the RPC system
+	err := rpc.Register(server)
+	if err != nil {
+		log.Fatalf("Error registering server: %s", err)
+	}
+
+	// Start the server's request processing queue
+	go server.processQueue()
+
+	// Start the server listener first
+	listener, err := net.Listen("tcp", server.LocalPort)
+	if err != nil {
+		log.Fatalf("Error starting server listener: %s", err)
+	}
+	defer listener.Close()
+	log.Printf("Server is running on port %s\n", server.LocalPort)
+
+	// Now initialize the load balancer
 	loadBalancer := &LoadBalancer{
-		LeaderPort: ":12346",
+		LeaderPort: server.LocalPort, // Pointing to the running server
 	}
 
 	errLoadBalancer := rpc.Register(loadBalancer)
@@ -335,28 +359,13 @@ func main() {
 		log.Fatalf("Error registering load balancer: %s", errLoadBalancer)
 	}
 
+	// Start the load balancer listener
 	lbListener, errlb := net.Listen("tcp", ":12345")
 	if errlb != nil {
 		log.Fatalf("Error starting load balancer listener: %s", errlb)
 	}
 	defer lbListener.Close()
 	log.Println("LoadBalancer is running on port 12345")
-
-	servers := init_Server(1, seatFile)
-	server := servers[0]
-	err := rpc.Register(server)
-	if err != nil {
-		log.Fatalf("Error registering server: %s", err)
-	}
-
-	go server.processQueue()
-
-	listener, err := net.Listen("tcp", server.LocalPort)
-	if err != nil {
-		log.Fatalf("Error starting server listener: %s", err)
-	}
-	defer listener.Close()
-	log.Printf("Server is running on port %s\n", server.LocalPort)
 
 	// Start a goroutine to handle load balancer requests
 	go func() {
