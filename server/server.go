@@ -34,6 +34,7 @@ type Seat struct {
 type Server struct {
 	LocalPort  string
 	serverID   int
+	isLeader   bool
 	OutgoingCh []chan string
 	IncomingCh chan string
 	sessions   map[string]struct {
@@ -55,11 +56,12 @@ func init_Server(numServer int, filePath string) []*Server {
 		servers[i] = &Server{
 			LocalPort: fmt.Sprintf(":%d", 12346+i),
 			serverID:  i,
+			isLeader:  i == 0, // first server i sleader
 			sessions: make(map[string]struct {
 				requestCh   chan common.Request
 				keepaliveCh chan common.Request
 			}),
-			IncomingCh: make(chan string),
+			IncomingCh: make(chan string, 100),
 			OutgoingCh: make([]chan string, numServer),
 			requests:   make(chan common.Request, 100), // Global processing queue
 			responses:  make(map[string]chan common.Response),
@@ -254,28 +256,33 @@ func (s *Server) processQueue() {
 	}
 }
 
-func (s *Server) sendHeartbeats(interval time.Duration) {
+func (s *Server) handleHeartbeats(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		for i, targetCh := range s.OutgoingCh {
-			if i == s.serverID {
-				continue
-			}
-			select {
-			case targetCh <- fmt.Sprintf("Heartbeat from Leader %d", s.serverID):
-				// Successfully sent heartbeat
-			default:
-				log.Printf("Server %d: Failed to send heartbeat to Server %d (buffer full)", s.serverID, i)
-			}
-		}
-	}
-}
+	for {
+		select {
+		case <-ticker.C:
+			if s.isLeader {
+				// Send heartbeats to all outgoing channels
+				fmt.Printf("Server %d sending heartbeats\n", s.serverID)
+				for i, targetCh := range s.OutgoingCh {
+					if i == s.serverID {
+						continue // Skip sending heartbeat to itself
+					}
 
-func (s *Server) processHeartbeats() {
-	for msg := range s.IncomingCh {
-		log.Printf("Server %d received: %s", s.serverID, msg)
+					select {
+					case targetCh <- fmt.Sprintf("Heartbeat from Leader %d", s.serverID):
+						// Successfully sent heartbeat
+					default:
+						log.Printf("Server %d: Failed to send heartbeat to Server %d (buffer full)", s.serverID, i)
+					}
+				}
+			}
+		case msg := <-s.IncomingCh:
+			// Process received heartbeats
+			log.Printf("Server %d received: %s", s.serverID, msg)
+		}
 	}
 }
 
@@ -305,6 +312,8 @@ func main() {
 		// Start the server's request processing queue
 		go server.processQueue()
 
+		go server.handleHeartbeats(2 * time.Second)
+
 		// Start the server listener
 		go func(s *Server) {
 			listener, err := net.Listen("tcp", s.LocalPort)
@@ -324,14 +333,6 @@ func main() {
 			}
 		}(server)
 	}
-
-	for _, server := range servers {
-		go server.processHeartbeats()
-	}
-
-	// Start the heartbeat sender for the leader (assume servers[0] is the leader)
-	go servers[0].sendHeartbeats(2 * time.Second)
-
 	// Now initialize the load balancer
 	loadBalancer := &LoadBalancer{
 		LeaderPort: servers[0].LocalPort,
