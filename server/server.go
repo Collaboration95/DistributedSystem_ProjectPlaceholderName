@@ -31,10 +31,6 @@ type Seat struct {
 	ClientID string
 }
 
-func getClientIDfromSessionID(sessionID string) string {
-	return strings.Split(sessionID, "-")[0]
-}
-
 type Server struct {
 	LocalPort string
 	serverID  int
@@ -66,72 +62,11 @@ func init_Server(numServer int, filePath string) []*Server {
 			seats:     make(map[string]Seat),
 			filePath:  filePath,
 		}
-
 		// Load the seat data from the file
 		servers[i].seats = localSeats
 	}
 
 	return servers
-}
-
-func loadSeats(filePath string) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		log.Fatalf("Error opening file %s: %s", filePath, err)
-
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	var seats []Seat
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		parts := strings.Split(line, ":")
-		if len(parts) == 3 {
-			seatID := strings.ToUpper(strings.TrimSpace(parts[0]))
-			status := strings.TrimSpace(parts[1])
-			clientID := strings.TrimSpace(parts[2])
-
-			seat := Seat{
-				SeatID:   seatID,
-				Status:   status,
-				ClientID: clientID,
-			}
-			seats = append(seats, seat)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatalf("Error reading file %s: %s", filePath, err)
-	}
-
-	localSeats = make(map[string]Seat)
-	for _, seat := range seats {
-		localSeats[seat.SeatID] = seat
-	}
-	log.Println("Seats loaded from file.")
-}
-
-// saveSeats writes the current seat map to a file
-func (s *Server) saveSeats() error {
-	file, err := os.OpenFile(s.filePath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open file for saving seats: %w", err)
-	}
-	defer file.Close()
-	writer := bufio.NewWriter(file)
-	for seatID, seat := range s.seats {
-		_, err := fmt.Fprintf(writer, "%s: %s: %s\n", seatID, seat.Status, seat.ClientID)
-		if err != nil {
-			return fmt.Errorf("failed to write seat data to file: %w", err)
-		}
-	}
-	if err := writer.Flush(); err != nil {
-		return fmt.Errorf("failed to flush seat data to file: %w", err)
-	}
-	log.Println("Seats successfully updated in file.")
-	return nil
 }
 
 func (s *Server) CreateSession(clientID string, reply *string) error {
@@ -354,8 +289,8 @@ func main() {
 
 	// Now initialize the load balancer
 	loadBalancer := &LoadBalancer{
-		LeaderPort: servers[0].LocalPort,   // Initially pointing to the first server
-		LeaderID:   fmt.Sprintf("Server0"), // Initially pointing to the first server's ID
+		LeaderPort: servers[0].LocalPort,
+		LeaderID:   fmt.Sprintf("Server0"),
 	}
 
 	errLoadBalancer := rpc.Register(loadBalancer)
@@ -385,4 +320,69 @@ func main() {
 
 	// Prevent main from exiting
 	select {}
+}
+
+// helper functions ( not relevant to flow of code)
+func getClientIDfromSessionID(sessionID string) string {
+	return strings.Split(sessionID, "-")[0]
+}
+
+func loadSeats(filePath string) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Fatalf("Error opening file %s: %s", filePath, err)
+
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var seats []Seat
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		parts := strings.Split(line, ":")
+		if len(parts) == 3 {
+			seatID := strings.ToUpper(strings.TrimSpace(parts[0]))
+			status := strings.TrimSpace(parts[1])
+			clientID := strings.TrimSpace(parts[2])
+
+			seat := Seat{
+				SeatID:   seatID,
+				Status:   status,
+				ClientID: clientID,
+			}
+			seats = append(seats, seat)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatalf("Error reading file %s: %s", filePath, err)
+	}
+
+	localSeats = make(map[string]Seat)
+	for _, seat := range seats {
+		localSeats[seat.SeatID] = seat
+	}
+	log.Println("Seats loaded from file.")
+}
+
+// saveSeats writes the current seat map to a file
+func (s *Server) saveSeats() error {
+	file, err := os.OpenFile(s.filePath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open file for saving seats: %w", err)
+	}
+	defer file.Close()
+	writer := bufio.NewWriter(file)
+	for seatID, seat := range s.seats {
+		_, err := fmt.Fprintf(writer, "%s: %s: %s\n", seatID, seat.Status, seat.ClientID)
+		if err != nil {
+			return fmt.Errorf("failed to write seat data to file: %w", err)
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("failed to flush seat data to file: %w", err)
+	}
+	log.Println("Seats successfully updated in file.")
+	return nil
 }
