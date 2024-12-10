@@ -16,6 +16,8 @@ import (
 const (
 	seatFile   = "seats.txt"
 	numServers = 3
+	timeout    = 15 * time.Second
+	interval   = 10 * time.Second
 )
 
 var localSeats = make(map[string]Seat)
@@ -256,15 +258,17 @@ func (s *Server) processQueue() {
 	}
 }
 
-func (s *Server) handleHeartbeats(interval time.Duration) {
+func (s *Server) handleHeartbeats() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	lastHeartbeat := time.Now()
 
 	for {
 		select {
 		case <-ticker.C:
 			if s.isLeader {
-				// Send heartbeats to all outgoing channels
+				// Leader sends heartbeats
 				fmt.Printf("Server %d sending heartbeats\n", s.serverID)
 				for i, targetCh := range s.OutgoingCh {
 					if i == s.serverID {
@@ -278,10 +282,17 @@ func (s *Server) handleHeartbeats(interval time.Duration) {
 						log.Printf("Server %d: Failed to send heartbeat to Server %d (buffer full)", s.serverID, i)
 					}
 				}
+			} else {
+				// Non-leader checks for timeout
+				if time.Since(lastHeartbeat) > timeout {
+					log.Printf("Server %d: No heartbeat received within timeout period!", s.serverID)
+					lastHeartbeat = time.Now() // Reset timeout to avoid repeated logs
+				}
 			}
 		case msg := <-s.IncomingCh:
 			// Process received heartbeats
 			log.Printf("Server %d received: %s", s.serverID, msg)
+			lastHeartbeat = time.Now() // Update the last heartbeat time
 		}
 	}
 }
@@ -312,7 +323,9 @@ func main() {
 		// Start the server's request processing queue
 		go server.processQueue()
 
-		go server.handleHeartbeats(2 * time.Second)
+		for _, server := range servers {
+			go server.handleHeartbeats()
+		}
 
 		// Start the server listener
 		go func(s *Server) {
