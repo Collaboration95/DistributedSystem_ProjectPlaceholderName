@@ -17,7 +17,7 @@ import (
 
 const (
 	seatFile   = "seats.txt"
-	numServers = 3
+	numServers = 5
 	timeout    = 5 * time.Second
 	interval   = 2 * time.Second
 	maxTimeout = 300 * time.Millisecond
@@ -518,6 +518,10 @@ func update_LoadBalancer(LeaderPort string, LeaderID string) {
 	loadBalancer.LeaderID = LeaderID
 }
 
+/////////////////////////////////
+
+/////////////////////////////////
+
 func main() {
 	// Load the seat data from the file
 	loadSeats(seatFile)
@@ -593,7 +597,7 @@ func main() {
 	select {}
 }
 
-// helper functions ( not relevant to flow of code)
+// helper functions (not relevant to flow of code)
 func getClientIDfromSessionID(sessionID string) string {
 	return strings.Split(sessionID, "-")[0]
 }
