@@ -48,6 +48,11 @@ type LoadBalancer struct {
 	LeaderID   string // Add the serverID of the leader
 }
 
+type LogEntry struct {
+	Term    int
+	Command common.Request
+}
+
 type Seat struct {
 	SeatID   string
 	Status   string
@@ -83,6 +88,24 @@ type Server struct {
 	mu           sync.Mutex
 	sessionMux   sync.Mutex
 	keepaliveMux sync.Mutex
+
+	logEntries  []LogEntry
+	commitIndex int
+	lastApplied int
+}
+
+type AppendEntries struct {
+	Term         int
+	LeaderId     int
+	PrevLogIndex int
+	PrevLogTerm  int
+	Entries      []LogEntry
+	LeaderCommit int
+}
+
+type AppendEntriesResponse struct {
+	Term    int
+	Success bool
 }
 
 func init_Server(numServer int, filePath string) []*Server {
