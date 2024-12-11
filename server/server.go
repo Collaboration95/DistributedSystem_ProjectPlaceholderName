@@ -19,10 +19,10 @@ const (
 	seatFile      = "seats.txt"
 	numServers    = 3
 	timeout       = 5 * time.Second
-	serverTimeout = 3 * time.Second
-	interval      = 2 * time.Second
-	maxTimeout    = 600 * time.Millisecond
-	minTimeout    = 100 * time.Millisecond
+	serverTimeout = 2 * time.Second
+	interval      = 1 * time.Second
+	maxTimeout    = 1500 * time.Millisecond
+	minTimeout    = 500 * time.Millisecond
 )
 
 type InternalMessage struct {
