@@ -16,12 +16,13 @@ import (
 )
 
 const (
-	seatFile   = "seats.txt"
-	numServers = 3
-	timeout    = 1 * time.Second
-	interval   = 2 * time.Second
-	maxTimeout = 300 * time.Millisecond
-	minTimeout = 150 * time.Millisecond
+	seatFile      = "seats.txt"
+	numServers    = 3
+	timeout       = 5 * time.Second
+	serverTimeout = 3 * time.Second
+	interval      = 2 * time.Second
+	maxTimeout    = 600 * time.Millisecond
+	minTimeout    = 100 * time.Millisecond
 )
 
 type InternalMessage struct {
@@ -150,14 +151,12 @@ func (s *Server) CreateSession(clientID string, reply *string) error {
 func (s *Server) serverSession(sessionID string, requestCh chan common.Request, keepaliveCh chan common.Request, timeout time.Duration) {
 	log.Printf("Server session %s started", sessionID)
 
-	lastHeartbeat := time.Now()
 	timer := time.NewTimer(timeout)
 
 	for {
 		select {
 		case req := <-keepaliveCh:
 			if req.Type == "KEEPALIVE" {
-				lastHeartbeat = time.Now()
 				log.Printf("Session %s received KeepAlive from %s", sessionID, req.ClientID)
 
 				// Reset the timer on a KeepAlive
@@ -180,17 +179,16 @@ func (s *Server) serverSession(sessionID string, requestCh chan common.Request, 
 			timer.Reset(timeout)
 
 		case <-timer.C:
-			if time.Since(lastHeartbeat) > timeout {
-				log.Printf("Session %s timed out. Cleaning up...", sessionID)
+			// Timer fired, meaning no activity within the timeout period
+			log.Printf("Session %s timed out. Cleaning up...", sessionID)
 
-				// Clean up the session and exit the goroutine
-				s.sessionMux.Lock()
-				delete(s.sessions, sessionID)
-				s.sessionMux.Unlock()
-				close(requestCh)
-				close(keepaliveCh)
-				return
-			}
+			// Clean up the session and exit the goroutine
+			s.sessionMux.Lock()
+			delete(s.sessions, sessionID)
+			s.sessionMux.Unlock()
+			close(requestCh)
+			close(keepaliveCh)
+			return
 		}
 	}
 }
@@ -334,7 +332,8 @@ func (s *Server) handleHeartbeats() {
 				// This server is a follower or candidate
 				localDelay := time.Duration(rand.Intn(int(maxTimeout-minTimeout))) + minTimeout
 
-				if time.Since(lastHeartbeat) > (timeout + localDelay) {
+				if time.Since(lastHeartbeat) > (serverTimeout + localDelay) {
+					fmt.Printf("servertimeout + localDelay is %v\n", serverTimeout+localDelay)
 					// No heartbeat received within timeout: start election
 					log.Printf("Server %d: No heartbeat received. Starting election (Term %d -> Term %d)", s.serverID, s.term, s.term+1)
 
@@ -354,6 +353,7 @@ func (s *Server) handleHeartbeats() {
 					// Broadcast REQUESTVOTE to all other servers
 					for i := range s.OutgoingCh {
 						if i != s.serverID {
+
 							s.OutgoingCh[i] <- requestVoteMessage
 						}
 					}
@@ -485,7 +485,7 @@ func (s *Server) handleHeartbeats() {
 							}
 						} else {
 							// Vote not granted
-							fmt.Printf("Server %d received a negative vote response for Term %d.\n", s.serverID, responseTerm)
+							// fmt.Printf("Server %d received a negative vote response for Term %d.\n", s.serverID, responseTerm)
 							// No specific action required for a negative vote unless you want to handle tie situations.
 						}
 					} else {
