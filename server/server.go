@@ -53,6 +53,7 @@ type InternalMessage struct {
 }
 
 type RaftState int
+type logString string
 
 const (
 	Follower RaftState = iota
@@ -71,8 +72,13 @@ type LoadBalancer struct {
 
 // Log Replication //
 type LogEntry struct {
+	SeatID    string
 	Operation string
-	Term      int
+	ClientID  string
+}
+
+type ConfirmAppend struct {
+	ConfirmAppend string
 }
 
 type Seat struct {
@@ -112,17 +118,17 @@ type Server struct {
 	keepaliveMux sync.Mutex
 
 	// Log Replication //
-	AppendLogEntryCh chan common.Request  // for each server's log
-	ConfirmAppendCh  chan common.Response // for server to acknowledge that it has appended entry
+	AppendLogEntryCh chan []LogEntry    // for each server's log
+	ConfirmAppendCh  chan ConfirmAppend // for server to acknowledge that it has appended entry
+	logString        string
 
-	Log map[string]struct {
-		Index    int
-		LogEntry struct {
-			Operation string
-			Term      int
-		} // contains:	Operation string Term int
+	// Log map[string]map[string]struct {
+	// 	Operation string
+	// 	Term      int
+	// }
+	Log map[int]string // {index : logString }
+	// Log map[int]map[string]string {index : {seatID: , op: , clientID}}
 
-	}
 }
 
 func init_Server(numServer int, filePath string) []*Server {
@@ -148,15 +154,17 @@ func init_Server(numServer int, filePath string) []*Server {
 			votes:      0,
 
 			// Log Replication //
-			AppendLogEntryCh: make(chan common.Request),
-			ConfirmAppendCh:  make(chan common.Response),
-			Log: make(map[string]struct {
-				Index    int
-				LogEntry struct {
-					Operation string
-					Term      int
-				}
-			}),
+			logString:        "",
+			AppendLogEntryCh: make(chan []LogEntry, numServer),
+			ConfirmAppendCh:  make(chan ConfirmAppend, numServer),
+			// Log: make(map[string]struct {
+			// 	Index    int
+			// 	LogEntry struct {
+			// 		Operation string
+			// 		Term      int
+			// 	}
+			// }),
+			Log: make(map[int]string),
 		}
 
 		// Load the seat data from the file
@@ -300,7 +308,10 @@ func (s *Server) processQueue() {
 						ClientID: req.ClientID,
 					}
 					responseMessage = fmt.Sprintf("Seat %s reserved for client %s by %s", seatID, req.ClientID, req.ServerID)
-					s.saveSeats() // Save the updated seat map
+					s.logString = fmt.Sprintf("%s, %s, %s", seatID, req.Type, req.ClientID)
+					s.appendEntry(logString(s.logString))
+					s.entryCommit()
+					// s.saveSeats() // Save the updated seat map
 				} else {
 					status = "FAILURE"
 					responseMessage = fmt.Sprintf("Seat %s is already occupied. Client %s by %s", seatID, req.ClientID, req.ServerID)
@@ -320,7 +331,11 @@ func (s *Server) processQueue() {
 						ClientID: "",
 					}
 					responseMessage = fmt.Sprintf("Reservation for seat %s cancelled by client %s via %s", seatID, req.ClientID, req.ServerID)
-					s.saveSeats() // Save the updated seat map
+					// s.appendEntry()
+					s.logString = fmt.Sprintf("%s, %s, %s", seatID, req.Type, req.ClientID)
+					s.appendEntry(logString(s.logString))
+					s.entryCommit()
+					//s.saveSeats() // Save the updated seat map
 				} else {
 					status = "FAILURE"
 					responseMessage = fmt.Sprintf("Seat %s is not occupied. Cannot cancel. Client %s by %s", seatID, req.ClientID, req.ServerID)
@@ -579,84 +594,65 @@ func update_LoadBalancer(LeaderPort string, LeaderID string) {
 // 1. Client Update (Read global queue [s.requests]) if write -> appendEntry (add entry to local log of each follower server)
 // 1.1 appendEntry to leaderserver -> appendEntry to followers -> followers ConfirmAppend
 
-func (s *Server) appendEntry() {
-	// Only the leader can append entries
-	if !s.isLeader {
-		return
-	}
+// VERSION 1 APPEND ENTRY [ NOT A CONTINUOUS PROCESS]
+func (s *Server) appendEntry(logString logString, servers []*Server) {
+	fmt.Printf("appendEntry is called\n")
 
-	// Track the current log index
 	logIndexCounter := 0
+	logIndexCounter++
 
-	// Iterate through all pending requests in the global queue
-	for req := range s.requests {
-		// Increment log index
-		logIndexCounter++
+	s.Log[logIndexCounter] = string(logString)
+	logInfo := strings.Split(string(logString), ",")
+	LseatID := logInfo[0]
+	Loperation := logInfo[1]
+	LclientID := logInfo[2]
 
-		// // Create a log entry for the request
-		logEntry := struct {
-			Operation string
-			Term      int
-		}{
-			Operation: fmt.Sprintf("%s:%s:%s", req.SeatID, req.Type, req.ClientID),
-			Term:      s.term,
-		}
-
-		// Store the log entry in the leader's log
-		s.Log[fmt.Sprintf("%d", logIndexCounter)] = struct {
-			Index    int
-			LogEntry struct {
-				Operation string
-				Term      int
-			}
-		}{
-			Index: logIndexCounter,
-			LogEntry: struct {
-				Operation string
-				Term      int
-			}{
-				Operation: fmt.Sprintf(req.SeatID, req.Type, req.ClientID),
-				Term:      s.term,
-			},
-		}
-
-		// Broadcast the log entry to all followers
-		appendLogMessage := InternalMessage{
-			SourceId: s.serverID,
-			Type:     "APPENDENTRY",
-			Data: map[string]interface{}{
-				"logEntry": logEntry,
-				"logIndex": logIndexCounter,
-				"term":     s.term,
-			},
-		}
-
-		// Send to all other servers
-		for i := range s.OutgoingCh {
-			if i != s.serverID {
-				s.OutgoingCh[i] <- appendLogMessage
-			}
-		}
-
-		// Prepare to wait for confirmations
-		s.AppendLogEntryCh <- common.Request{
-			Type:     req.Type,
-			SeatID:   req.SeatID,
-			ClientID: req.ClientID,
-		}
+	fmt.Printf("appendEntry is called 2\n")
+	message := LogEntry{
+		SeatID:    LseatID,
+		Operation: Loperation,
+		ClientID:  LclientID,
 	}
-	fmt.Printf("testing append entries reach before calling entry commit")
-	s.entryCommit()
-	fmt.Printf("entry commit done successfully for server %d ", s.serverID)
+
+	fmt.Printf("%s just want to see how my beautiful message look", message)
+
+	// TODO FIX THIS AND SEND TO ALL SERVERS
+	// Send to all other servers
+	for i, server := range servers {
+		fmt.Printf("sending message to all server log log log log\n", i)
+		// TODO
+		// server.Log LOOK FOR MAXIMUM INDEX ?
+		// follower maximum index < logIndexCounter
+		// then only appendlogentrych
+		server.AppendLogEntryCh <- message
+	}
+
+	// for i := range s.AppendLogEntryCh {
+	// 	fmt.Printf("sending message to all server log log log log\n")
+	// 	s.AppendLogEntryCh[i] <- message
+	// }
+	fmt.Printf("appendEntry is called 3\n")
+
+	// if want to append, split strings for logString
+	// Prepare to wait for confirmations
+
+	// TODO CHECK CONFIRM APPEND
+	s.ConfirmAppendCh <- ConfirmAppend{
+		ConfirmAppend: "ConfirmAppend",
+	}
+
+	fmt.Printf("appendEntry is called 4 complete\n")
+	// s.entryCommit()
 }
 
+// TODO CHECK ENTRY COMMIT WORKS
 func (s *Server) entryCommit() {
 	// count num of follower servers and num of confirmAppend received
 	// if num of confirmAppend > num follower servers//2 -> update seatFile
 	// check that more than half the num of AppendLogEntry is acknowledged thru ConfirmAppendCh
 	if len(s.ConfirmAppendCh) > len(s.AppendLogEntryCh)/2 {
-		s.processQueue() // serve the client request and update the seatFile
-
+		s.saveSeats() // serve the client request and update the seatFile
+		fmt.Printf("aaaaaaaaaaaaaaaaaaaaa Successful entry commit & saved to seatFile aaaaaaaaaaaaaaaaaaaa")
 	}
 }
 
@@ -701,10 +697,12 @@ func main() {
 
 	for _, server := range servers {
 		go server.handleHeartbeats()
-		// Log Replication //
-		go func(s *Server) {
-			s.appendEntry()
-		}(server)
+		// // Log Replication //
+		// // go func(s *Server) {
+		// // 	s.appendEntry()
+		// // }(server)
+		// // ADDED ON 12 DEC 628 PM
+		// go server.appendEntry() // Continuous log replication
 	}
 
 	// loadBalancer := init_LoadBalancer(servers)
