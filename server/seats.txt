@@ -1,0 +1,12 @@
+1A: available: 
+3C: available: 
+4A: available: 
+1C: available: 
+2A: available: 
+3B: available: 
+2C: available: 
+3A: available: 
+4B: available: 
+4C: available: 
+1B: available: 
+2B: available: 
