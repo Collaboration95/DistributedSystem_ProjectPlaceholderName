@@ -18,7 +18,7 @@ import (
 const (
 	seatFile   = "seats.txt"
 	numServers = 3
-	timeout    = 5 * time.Second
+	timeout    = 1 * time.Second
 	interval   = 2 * time.Second
 	maxTimeout = 300 * time.Millisecond
 	minTimeout = 150 * time.Millisecond
@@ -54,29 +54,34 @@ type Seat struct {
 }
 
 type Server struct {
+	// Role and state information
 	role          RaftState
+	term          int
 	votes         int
 	votedFor      int
-	term          int
 	lastHeartbeat time.Time
-	LeaderPort    string
-	LocalPort     string
-	serverID      int
 	isLeader      bool
-	OutgoingCh    []chan InternalMessage
-	IncomingCh    chan InternalMessage
-	sessions      map[string]struct {
+	isAlive       bool
+	// Networking and communication
+	LeaderPort string
+	LocalPort  string
+	serverID   int
+	OutgoingCh []chan InternalMessage
+	IncomingCh chan InternalMessage
+
+	sessions map[string]struct {
 		requestCh   chan common.Request
 		keepaliveCh chan common.Request
-	} // Map of session IDs to channels
-	requests     chan common.Request // Global processing queue
-	responses    map[string]chan common.Response
-	seats        map[string]Seat
+	}
+	requests  chan common.Request
+	responses map[string]chan common.Response
+
+	seats    map[string]Seat
+	filePath string
+
 	mu           sync.Mutex
 	sessionMux   sync.Mutex
 	keepaliveMux sync.Mutex
-	filePath     string // File path to seat map
-	isAlive      bool
 }
 
 func init_Server(numServer int, filePath string) []*Server {
