@@ -5,12 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"net/rpc"
 	"os"
 	"rpc-system/common"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/exp/rand"
 )
 
 type Client struct {
@@ -25,8 +28,7 @@ type Client struct {
 }
 
 const (
-	HeartbeatInterval = 5 * time.Second
-	KeepAliveTimeout  = 10 * time.Second
+	HeartbeatInterval = 10 * time.Second
 )
 
 func init_Client(clientID string, rpcClient *rpc.Client, rpcHandle string) *Client {
@@ -89,39 +91,55 @@ func (c *Client) sendHeartbeat() {
 		}
 	}
 }
-
 func connectToLoadBalancer(lbAddress string) (string, string, error) {
-	// Dial the load balancer
-	lbClient, err := rpc.Dial("tcp", lbAddress)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to connect to load balancer: %w", err)
+	const (
+		maxRetries     = 15
+		initialBackoff = 500 * time.Millisecond
+		maxBackoff     = 15 * time.Second
+	)
+
+	var backoff time.Duration = initialBackoff
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Dial the load balancer
+		lbClient, err := rpc.Dial("tcp", lbAddress)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to connect to load balancer: %w", err)
+		}
+
+		// Prepare request and response
+		req := &common.Request{}
+		res := &common.Response{}
+
+		// Call LoadBalancer.GetLeaderIP
+		err = lbClient.Call("LoadBalancer.GetLeaderIP", req, res)
+		lbClient.Close() // Always close the client after the call
+
+		if err != nil {
+			return "", "", fmt.Errorf("failed to call GetLeaderIP on load balancer: %w", err)
+		}
+
+		// Check if the response indicates success
+		if res.Status == "SUCCESS" {
+			// Split the response to get port and ID
+			parts := strings.Split(res.Message, ",")
+			if len(parts) == 2 && parts[0] != "" && parts[1] != "" { // Ensure the response has valid data
+				return parts[0], parts[1], nil
+			}
+		}
+
+		// Log a warning and back off before retrying
+		fmt.Printf("Attempt %d: Failed to get valid leader info (Response: %s). Retrying in %v...\n", attempt, res.Message, backoff)
+		time.Sleep(backoff)
+
+		// Increment the backoff duration (exponential growth with jitter)
+		backoff = time.Duration(math.Min(float64(maxBackoff), float64(backoff)*1.5)) + time.Duration(rand.Intn(100))*time.Millisecond
 	}
-	defer lbClient.Close()
 
-	// Prepare request and response
-	req := &common.Request{}
-	res := &common.Response{}
-
-	// Call LoadBalancer.GetLeaderIP
-	err = lbClient.Call("LoadBalancer.GetLeaderIP", req, res)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to call GetLeaderIP on load balancer: %w", err)
-	}
-
-	if res.Status != "SUCCESS" {
-		return "", "", fmt.Errorf("load balancer failed to provide leader info: %s", res.Message)
-	}
-
-	// Split the response to get port and ID
-	parts := strings.Split(res.Message, ",")
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid leader info received: %s", res.Message)
-	}
-
-	return parts[0], parts[1], nil
+	return "", "", fmt.Errorf("exceeded max retries to connect to load balancer")
 }
 
 func connectToMasterServer() (*rpc.Client, string, error) {
+
 	// First, connect to the load balancer
 	leaderAddress, leaderID, err := connectToLoadBalancer("127.0.0.1:12345")
 	if err != nil {
