@@ -293,6 +293,8 @@ func (s *Server) processQueue() {
 }
 
 func (s *Server) handleHeartbeats() {
+	isFirstRound := true
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -329,6 +331,35 @@ func (s *Server) handleHeartbeats() {
 					}
 				}
 			} else {
+
+				if isFirstRound {
+					// Skip timeout and start election immediately on the first tick
+					isFirstRound = false
+					fmt.Printf("Server %d skipping timeout and starting immediate election (Term %d)\n", s.serverID, s.term+1)
+
+					s.term += 1
+					s.role = Candidate
+					s.votedFor = s.serverID
+					s.votes = 1 // vote for itself
+
+					requestVoteMessage := InternalMessage{
+						SourceId: s.serverID,
+						Type:     "REQUESTVOTE",
+						Data:     s.term,
+					}
+
+					// Broadcast REQUESTVOTE to all other servers
+					for i := range s.OutgoingCh {
+						if i != s.serverID {
+							s.OutgoingCh[i] <- requestVoteMessage
+						}
+					}
+
+					// Reset the lastHeartbeat to prevent immediate re-election
+					lastHeartbeat = time.Now()
+					continue
+				}
+
 				// This server is a follower or candidate
 				localDelay := time.Duration(rand.Intn(int(maxTimeout-minTimeout))) + minTimeout
 
