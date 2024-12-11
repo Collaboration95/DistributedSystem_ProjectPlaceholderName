@@ -553,10 +553,37 @@ func update_LoadBalancer(LeaderPort string, LeaderID string) {
 	loadBalancer.LeaderPort = LeaderPort
 	loadBalancer.LeaderID = LeaderID
 }
-
 func main() {
 	// Load the seat data from the file
 	loadSeats(seatFile)
+
+	errLoadBalancer := rpc.Register(loadBalancer)
+	if errLoadBalancer != nil {
+		log.Fatalf("Error registering load balancer: %s", errLoadBalancer)
+	}
+
+	// Start the load balancer listener
+	lbListener, errlb := net.Listen("tcp", ":12345")
+	if errlb != nil {
+		log.Fatalf("Error starting load balancer listener: %s", errlb)
+	}
+	defer lbListener.Close()
+	log.Println("LoadBalancer is running on port 12345")
+
+	// Start a goroutine to handle load balancer requests
+	go func() {
+		for {
+			conn, err := lbListener.Accept()
+			if err != nil {
+				log.Println("Load Balancer connection error:", err)
+				continue
+			}
+			go rpc.ServeConn(conn)
+		}
+	}()
+
+	// Give the load balancer some time to initialize
+	time.Sleep(2 * time.Second)
 
 	// Initialize servers
 	servers := init_Server(numServers, seatFile)
@@ -596,34 +623,6 @@ func main() {
 	for _, server := range servers {
 		go server.handleHeartbeats()
 	}
-
-	// loadBalancer := init_LoadBalancer(servers)
-	time.Sleep(5 * time.Second)
-
-	errLoadBalancer := rpc.Register(loadBalancer)
-	if errLoadBalancer != nil {
-		log.Fatalf("Error registering load balancer: %s", errLoadBalancer)
-	}
-
-	// Start the load balancer listener
-	lbListener, errlb := net.Listen("tcp", ":12345")
-	if errlb != nil {
-		log.Fatalf("Error starting load balancer listener: %s", errlb)
-	}
-	defer lbListener.Close()
-	log.Println("LoadBalancer is running on port 12345")
-
-	// Start a goroutine to handle load balancer requests
-	go func() {
-		for {
-			conn, err := lbListener.Accept()
-			if err != nil {
-				log.Println("Load Balancer connection error:", err)
-				continue
-			}
-			go rpc.ServeConn(conn)
-		}
-	}()
 
 	// Prevent main from exiting
 	select {}
