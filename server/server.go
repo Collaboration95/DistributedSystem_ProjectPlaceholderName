@@ -18,7 +18,7 @@ import (
 
 const (
 	seatFile      = "seats.txt"
-	numServers    = 3
+	numServers    = 5
 	timeout       = 10 * time.Second
 	serverTimeout = 3 * time.Second
 	interval      = 1 * time.Second
@@ -92,6 +92,7 @@ type Server struct {
 	sessionMux   sync.Mutex
 	keepaliveMux sync.Mutex
 
+	// Log Replication //
 	log         []LogEntry
 	commitIndex int
 	lastApplied int
@@ -122,6 +123,7 @@ func init_Server(numServer int, filePath string) []*Server {
 			isAlive:    true,
 			votes:      0,
 
+			// Log Replication //
 			log:         []LogEntry{},
 			commitIndex: -1,
 			lastApplied: -1,
@@ -151,14 +153,6 @@ func init_Server(numServer int, filePath string) []*Server {
 
 // START LOG REPLICATION //
 
-// Helper function to get the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // AppendLogEntry adds a new entry to the server's log
 func (s *Server) AppendLogEntry(entry LogEntry) int {
 	s.logMutex.Lock()
@@ -174,6 +168,12 @@ func (s *Server) AppendLogEntry(entry LogEntry) int {
 func (s *Server) ReplicateLog(entry LogEntry) error {
 	if s.role != Leader {
 		return fmt.Errorf("not a leader, cannot replicate log")
+	}
+
+	// First, validate the request
+	status := s.validateRequest(entry.Command.(common.Request))
+	if status != "SUCCESS" {
+		return fmt.Errorf("request validation failed: %s", status)
 	}
 
 	s.logMutex.Lock()
@@ -200,7 +200,7 @@ func (s *Server) ReplicateLog(entry LogEntry) error {
 	// Synchronization primitives
 	numServers := len(s.OutgoingCh)
 	responsesCh := make(chan bool, numServers)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second) // From 2 -> 10
 	defer cancel()
 
 	// Replication counter starts with 1 (leader always counts)
@@ -260,6 +260,36 @@ func (s *Server) ReplicateLog(entry LogEntry) error {
 			return fmt.Errorf("log replication timed out")
 		}
 	}
+}
+
+// Add a method to validate the request before logging
+func (s *Server) validateRequest(req common.Request) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	seatID := strings.ToUpper(strings.TrimSpace(req.SeatID))
+	if seat, exists := s.seats[seatID]; exists {
+		switch req.Type {
+		case "RESERVE":
+			if seat.Status == "available" {
+				return "SUCCESS"
+			}
+			return "FAILURE: Seat already occupied"
+		case "CANCEL":
+			if seat.Status == "occupied" {
+				requestingClientID := getClientIDfromSessionID(req.ClientID)
+				occupyingClientID := getClientIDfromSessionID(seat.ClientID)
+				if requestingClientID == occupyingClientID {
+					return "SUCCESS"
+				}
+				return "FAILURE: Seat occupied by different client"
+			}
+			return "FAILURE: Seat not occupied"
+		default:
+			return "FAILURE: Invalid request type"
+		}
+	}
+	return "FAILURE: Seat does not exist"
 }
 
 // Apply committed log entries to the state machine
@@ -471,10 +501,26 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 		return nil
 	}
 
+	// Validate request before creating log entry
+	validationStatus := s.validateRequest(*req)
+	if validationStatus != "SUCCESS" {
+		res.Status = "FAILURE"
+		res.Message = validationStatus
+		return nil
+	}
+
 	// Create a log entry for the request
 	logEntry := LogEntry{
 		Command:  *req,
 		ClientID: req.ClientID,
+	}
+
+	// Attempt to replicate the log
+	err := s.ReplicateLog(logEntry)
+	if err != nil {
+		res.Status = "FAILURE"
+		res.Message = fmt.Sprintf("Log replication failed: %v", err)
+		return nil
 	}
 
 	requestID := fmt.Sprintf("%s-%d", req.ClientID, time.Now().UnixNano())
@@ -494,14 +540,6 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 	s.mu.Lock()
 	delete(s.responses, requestID)
 	s.mu.Unlock()
-
-	// Attempt to replicate the log
-	err := s.ReplicateLog(logEntry)
-	if err != nil {
-		res.Status = "FAILURE"
-		res.Message = fmt.Sprintf("Log replication failed: %v", err)
-		return nil
-	}
 
 	res.Status = "SUCCESS"
 	res.Message = fmt.Sprintf("Operation %s for seat %s processed successfully", req.Type, req.SeatID)
@@ -778,13 +816,13 @@ func (s *Server) runServerLoop() {
 						// Negative or stale vote response ignored
 					}
 				}
+			// LOG REPLICATION //
 			case "APPENDENTRIESRESPONSE":
 				// Handle AppendEntries response
-				s.handleAppendEntries(msg)
 				if s.role == Leader {
 					respData := msg.Data.(map[string]interface{})
 					success := respData["success"].(bool)
-
+					s.handleAppendEntries(msg)
 					if !success {
 						fmt.Printf("Log replication failed for a follower\n")
 					}
@@ -882,7 +920,8 @@ func main() {
 
 	for _, server := range servers {
 		go server.runServerLoop()
-		go server.periodicLogPrinting() // Optional periodic log printing
+		// LOG REPLICATION //
+		go server.periodicLogPrinting()
 		// go server.handleHeartbeats()
 	}
 
@@ -955,6 +994,7 @@ func (s *Server) saveSeats() error {
 	return nil
 }
 
+// LOG REPLICATION //
 // PrintServerLog prints the current state of the server's log
 func (s *Server) PrintServerLog() {
 	roleStr := "Follower"
@@ -1005,6 +1045,40 @@ func (s *Server) periodicLogPrinting() {
 		select {
 		case <-ticker.C:
 			s.PrintServerLog()
+
+			// // Add more detailed log replication information
+			// fmt.Printf("\nDetailed Log Replication Info for Server %d:\n", s.serverID)
+			// fmt.Printf("Current Role: %v\n", s.role)
+			// fmt.Printf("Current Term: %d\n", s.term)
+			// fmt.Printf("Commit Index: %d\n", s.commitIndex)
+			// fmt.Printf("Last Applied: %d\n", s.lastApplied)
+			// fmt.Printf("Total Log Entries: %d\n", len(s.log))
+
+			// If this is a follower, show last received entries
+			if s.role != Leader {
+				fmt.Println("Last Received Log Entries:")
+				for i := max(0, len(s.log)-5); i < len(s.log); i++ {
+					entry := s.log[i]
+					fmt.Printf("Index: %d, Term: %d, Command: %v\n",
+						entry.Index, entry.Term, entry.Command)
+				}
+			}
 		}
 	}
+}
+
+// Helper function to get the maximum of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// Helper function to get the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
