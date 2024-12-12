@@ -291,7 +291,8 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 	return nil
 }
 
-func (s *Server) processQueue() {
+// pass Servers []*Server
+func (s *Server) processQueue(Servers []*Server) {
 	for req := range s.requests {
 		responseMessage := ""
 		status := "SUCCESS"
@@ -309,7 +310,7 @@ func (s *Server) processQueue() {
 					}
 					responseMessage = fmt.Sprintf("Seat %s reserved for client %s by %s", seatID, req.ClientID, req.ServerID)
 					s.logString = fmt.Sprintf("%s, %s, %s", seatID, req.Type, req.ClientID)
-					s.appendEntry(logString(s.logString))
+					s.appendEntry(logString(s.logString), Servers)
 					s.entryCommit()
 					// s.saveSeats() // Save the updated seat map
 				} else {
@@ -333,7 +334,7 @@ func (s *Server) processQueue() {
 					responseMessage = fmt.Sprintf("Reservation for seat %s cancelled by client %s via %s", seatID, req.ClientID, req.ServerID)
 					// s.appendEntry()
 					s.logString = fmt.Sprintf("%s, %s, %s", seatID, req.Type, req.ClientID)
-					s.appendEntry(logString(s.logString))
+					s.appendEntry(logString(s.logString), Servers)
 					s.entryCommit()
 					//s.saveSeats() // Save the updated seat map
 				} else {
@@ -619,12 +620,15 @@ func (s *Server) appendEntry(logString logString, servers []*Server) {
 	// TODO FIX THIS AND SEND TO ALL SERVERS
 	// Send to all other servers
 	for i, server := range servers {
-		fmt.Printf("sending message to all server log log log log\n", i)
+		fmt.Printf("How many server", i)
 		// TODO
 		// server.Log LOOK FOR MAXIMUM INDEX ?
 		// follower maximum index < logIndexCounter
 		// then only appendlogentrych
-		server.AppendLogEntryCh <- message
+		fmt.Printf("This is the message %s", []LogEntry{message})
+
+		//Output:
+		server.AppendLogEntryCh <- []LogEntry{message} // ERROR : cannot use message (variable of type LogEntry) as []LogEntry value in sendcompilerIncompatibleAssign
 	}
 
 	// for i := range s.AppendLogEntryCh {
@@ -673,7 +677,7 @@ func main() {
 		}
 
 		// Start the server's request processing queue
-		go server.processQueue()
+		go server.processQueue(servers) // pass servers to processQueue
 
 		// Start the server listener
 		go func(s *Server) {
@@ -705,7 +709,7 @@ func main() {
 		// go server.appendEntry() // Continuous log replication
 	}
 
-	// loadBalancer := init_LoadBalancer(servers)
+	//loadBalancer := init_LoadBalancer(servers)
 	time.Sleep(5 * time.Second)
 
 	errLoadBalancer := rpc.Register(loadBalancer)
