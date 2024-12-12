@@ -28,7 +28,7 @@ type Client struct {
 }
 
 const (
-	HeartbeatInterval = 10 * time.Second
+	HeartbeatInterval = 5 * time.Second
 )
 
 func init_Client(clientID string, rpcClient *rpc.Client, rpcHandle string) *Client {
