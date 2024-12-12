@@ -89,9 +89,11 @@ type Server struct {
 	sessionMux   sync.Mutex
 	keepaliveMux sync.Mutex
 
-	logEntries  []LogEntry
-	commitIndex int
-	lastApplied int
+	logEntries     []LogEntry
+	commitIndex    int
+	lastApplied    int
+	RaftOutgoingch []chan InternalMessage
+	RaftIncomingch chan InternalMessage
 }
 
 type AppendEntries struct {
@@ -101,6 +103,17 @@ type AppendEntries struct {
 	PrevLogTerm  int
 	Entries      []LogEntry
 	LeaderCommit int
+}
+
+type AppendCommit struct {
+	Term         int
+	LeaderId     int
+	LeaderCommit int
+}
+
+type AppendCommitResponse struct {
+	Term    int  // The current term of the responding follower
+	Success bool // Indicates whether the commit acknowledgment was successful
 }
 
 type AppendEntriesResponse struct {
@@ -394,7 +407,7 @@ func (s *Server) runServerLoop() {
 				}(i)
 			}
 
-			// Wait for responses
+			// Wait for AppendEntries responses
 			for i := 0; i < len(s.OutgoingCh)-1; i++ {
 				response := <-s.IncomingCh
 				if response.Type == "APPENDENTRIESRESPONSE" {
@@ -411,30 +424,24 @@ func (s *Server) runServerLoop() {
 					}
 				}
 			}
+
 			if successCount >= majority {
-				// Apply the command
-				status, responseMessage := s.applyCommand(req)
+				// The log entry is now considered committed
+				s.mu.Lock()
+				s.commitIndex = len(s.logEntries) - 1
+				entry := s.logEntries[s.commitIndex]
+				s.mu.Unlock()
+
+				// Apply the committed entry to the local state machine
+				log.Printf("Server %d: Applying committed entry to state machine: %+v", s.serverID, entry)
+				status, responseMessage := s.applyCommand(entry.Command)
 				log.Printf("[%s] %s", status, responseMessage)
 
 				// Respond to the client
 				if responseCh, exists := s.responses[req.ClientID]; exists {
 					responseCh <- common.Response{Status: status, Message: responseMessage}
 				}
-			} else {
-				log.Printf("Failed to replicate log entry for request: %+v", req)
-			}
 
-			// Notify client if majority is reached
-			if successCount >= majority {
-				log.Printf("Server %d: Majority achieved, log entry committed", s.serverID)
-				if responseCh, exists := s.responses[req.ClientID]; exists {
-					responseCh <- common.Response{
-						Status:  "SUCCESS",
-						Message: fmt.Sprintf("Log entry committed: %+v", req),
-					}
-				}
-			} else {
-				log.Printf("Server %d: Failed to achieve majority for log entry", s.serverID)
 			}
 		case <-ticker.C:
 			// This block was originally in handleHeartbeats
@@ -516,7 +523,7 @@ func (s *Server) runServerLoop() {
 			switch msg.Type {
 
 			case "HEARTBEAT":
-				log.Printf("Server %d received %s from Server %d", s.serverID, msg.Type, msg.SourceId)
+				// log.Printf("Server %d received %s from Server %d", s.serverID, msg.Type, msg.SourceId)
 				lastHeartbeat = time.Now()
 
 				if s.role == Candidate {
@@ -621,6 +628,7 @@ func (s *Server) runServerLoop() {
 				data := msg.Data.(AppendEntries)
 				s.mu.Lock()
 				defer s.mu.Unlock()
+				log.Printf("Server %d received AppendEntries from Server %d", s.serverID, data.LeaderId)
 
 				if data.Term < s.term {
 					// Reply with failure if the term is outdated
@@ -679,15 +687,6 @@ func (s *Server) runServerLoop() {
 					},
 				}
 
-				s.OutgoingCh[data.LeaderId] <- InternalMessage{
-					SourceId: s.serverID,
-					Type:     "APPENDENTRIESRESPONSE",
-					Data: AppendEntriesResponse{
-						Term:    s.term,
-						Success: true,
-					},
-				}
-
 			}
 
 		}
@@ -717,6 +716,7 @@ func update_LoadBalancer(LeaderPort string, LeaderID string) {
 	loadBalancer.LeaderPort = LeaderPort
 	loadBalancer.LeaderID = LeaderID
 }
+
 func main() {
 	// Load the seat data from the file
 	loadSeats(seatFile)
