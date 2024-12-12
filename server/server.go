@@ -122,10 +122,6 @@ type Server struct {
 	ConfirmAppendCh  chan ConfirmAppend // for server to acknowledge that it has appended entry
 	logString        string
 
-	// Log map[string]map[string]struct {
-	// 	Operation string
-	// 	Term      int
-	// }
 	Log map[int]string // {index : logString }
 	// Log map[int]map[string]string {index : {seatID: , op: , clientID}}
 
@@ -155,16 +151,9 @@ func init_Server(numServer int, filePath string) []*Server {
 
 			// Log Replication //
 			logString:        "",
-			AppendLogEntryCh: make(chan []LogEntry, numServer),
-			ConfirmAppendCh:  make(chan ConfirmAppend, numServer),
-			// Log: make(map[string]struct {
-			// 	Index    int
-			// 	LogEntry struct {
-			// 		Operation string
-			// 		Term      int
-			// 	}
-			// }),
-			Log: make(map[int]string),
+			AppendLogEntryCh: make(chan []LogEntry, 100),
+			ConfirmAppendCh:  make(chan ConfirmAppend, 100),
+			Log:              make(map[int]string),
 		}
 
 		// Load the seat data from the file
@@ -597,11 +586,16 @@ func update_LoadBalancer(LeaderPort string, LeaderID string) {
 
 // VERSION 1 APPEND ENTRY [ NOT A CONTINUOUS PROCESS]
 func (s *Server) appendEntry(logString logString, servers []*Server) {
-	logIndexCounter := 0
-	logIndexCounter++
 
-	s.Log[logIndexCounter] = string(logString)
+	// TODO ACCESS MAXIMUM INDEX OF LOG SERVER
+	// logIndexCounter := 0
+	// logIndexCounter++
+
+	leaderLogIndex := s.getMaxLogIndex(s) + 1
+
+	// s.Log[logIndexCounter] = string(logString)
 	logInfo := strings.Split(string(logString), ",")
+	s.Log[leaderLogIndex] = string(logString)
 	LseatID := logInfo[0]
 	Loperation := logInfo[1]
 	LclientID := logInfo[2]
@@ -618,16 +612,21 @@ func (s *Server) appendEntry(logString logString, servers []*Server) {
 		// TODO
 		// server.Log LOOK FOR MAXIMUM INDEX ?
 		// follower maximum index < logIndexCounter
-		// then only appendlogentrych
-		fmt.Printf("This is the Log Entry message %s being sent from the leader server %d to follower %d\n",
-			[]LogEntry{message}, s.serverID, server.serverID)
-		server.AppendLogEntryCh <- []LogEntry{message} // ERROR : cannot use message (variable of type LogEntry) as []LogEntry value in sendcompilerIncompatibleAssign
-	}
+		maxFollowerIndex := server.getMaxLogIndex(server)
 
-	s.ConfirmAppendCh <- ConfirmAppend{
-		ConfirmAppend: "ConfirmAppend",
-	}
+		// TODO COMPARE logIndexCounter WITH maxFollowerIndex
+		if leaderLogIndex > maxFollowerIndex {
+			// then only appendlogentrych
+			fmt.Printf("This is the Log Entry message %s being sent from the leader server %d to follower %d\n",
+				[]LogEntry{message}, s.serverID, server.serverID)
+			server.AppendLogEntryCh <- []LogEntry{message}
+			// ERROR : cannot use message (variable of type LogEntry) as []LogEntry value in sendcompilerIncompatibleAssign
 
+			s.ConfirmAppendCh <- ConfirmAppend{
+				ConfirmAppend: "ConfirmAppend",
+			}
+		}
+	}
 	fmt.Printf("AppendEntry is completed Yay!\n")
 }
 
@@ -640,6 +639,29 @@ func (s *Server) entryCommit() {
 		s.saveSeats() // serve the client request and update the seatFile
 		fmt.Printf("Successful entry commit & saved to seatFile\n")
 	}
+}
+
+func (s *Server) getMaxLogIndex(server *Server) int {
+	// For Log in 1 server
+	// Iterate through the Log map
+	// Get the latest & maximum index
+
+	var maxLogIndex int
+	for logIndex, _ := range server.Log {
+		// if LogIndex
+		maxLogIndex = logIndex
+		break
+	}
+
+	for n := range server.Log {
+		if n > maxLogIndex {
+			maxLogIndex = n
+			fmt.Printf("iter: maxFollowerIndex %d\n", maxLogIndex) // ITERATING THROUGH THE FOLLOWER LOG TO GET MAXIMUM
+		}
+	}
+	fmt.Printf("maxLogIndex %d\n", maxLogIndex) // MAXIMUM INDEX OF FOLLOWER LOG
+
+	return maxLogIndex
 }
 
 func main() {
@@ -683,12 +705,6 @@ func main() {
 
 	for _, server := range servers {
 		go server.handleHeartbeats()
-		// // Log Replication //
-		// // go func(s *Server) {
-		// // 	s.appendEntry()
-		// // }(server)
-		// // ADDED ON 12 DEC 628 PM
-		// go server.appendEntry() // Continuous log replication
 	}
 
 	//loadBalancer := init_LoadBalancer(servers)
