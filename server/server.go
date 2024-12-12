@@ -17,24 +17,11 @@ import (
 // Log Replication //
 // define log (struct): index, operation[seatID,  status, clientID], term
 // initialise log in server
-
-// TODO
 // 1. Client Update (Read global queue [ s.requests]) if write -> appendEntry (add entry to local log of each follower server)
 // 1.1 appendEntry to leaderserver -> appendEntry to followers -> followers ConfirmAppend
-
 // 2. -> Leadercommit- > (update seats.txt) ->
 // 2.1 when leader receives majority ConfirmAppend -> EntryCommit (edit seat.txt and update own log)
 // 2.1 Execute client request
-
-// const (
-// 	seatFile      = "seats.txt"
-// 	numServers    = 5 // Change to 5
-// 	timeout       = 5 * time.Second
-// 	serverTimeout = 3 * time.Second
-// 	interval      = 2 * time.Second
-// 	maxTimeout    = 350 * time.Millisecond
-// 	minTimeout    = 150 * time.Millisecond
-// )
 
 const (
 	seatFile      = "seats.txt"
@@ -121,10 +108,7 @@ type Server struct {
 	AppendLogEntryCh chan []LogEntry    // for each server's log
 	ConfirmAppendCh  chan ConfirmAppend // for server to acknowledge that it has appended entry
 	logString        string
-
-	Log map[int]string // {index : logString }
-	// Log map[int]map[string]string {index : {seatID: , op: , clientID}}
-
+	Log              map[int]string // {index : logString}
 }
 
 func init_Server(numServer int, filePath string) []*Server {
@@ -584,16 +568,9 @@ func update_LoadBalancer(LeaderPort string, LeaderID string) {
 // 1. Client Update (Read global queue [s.requests]) if write -> appendEntry (add entry to local log of each follower server)
 // 1.1 appendEntry to leaderserver -> appendEntry to followers -> followers ConfirmAppend
 
-// VERSION 1 APPEND ENTRY [NOT A CONTINUOUS PROCESS - Since we are not using heartbeat]
+// APPEND ENTRY
 func (s *Server) appendEntry(logString logString, servers []*Server) {
-
-	// TODO ACCESS MAXIMUM INDEX OF LOG SERVER
-	// logIndexCounter := 0
-	// logIndexCounter++
-
 	leaderLogIndex := s.getMaxLogIndex(s) + 1
-
-	// s.Log[logIndexCounter] = string(logString)
 	logInfo := strings.Split(string(logString), ",")
 	s.Log[leaderLogIndex] = string(logString)
 	LseatID := logInfo[0]
@@ -608,33 +585,29 @@ func (s *Server) appendEntry(logString logString, servers []*Server) {
 
 	// Send to all other servers
 	for i, server := range servers {
-		fmt.Sprintf("How many server %d\n", i)
-		// TODO
-		// server.Log LOOK FOR MAXIMUM INDEX ?
-		// follower maximum index < logIndexCounter
-		maxFollowerIndex := server.getMaxLogIndex(server)
+		fmt.Sprintf("How many server %d\n", i) // This will not be printed - its a pseudo fix do not remove
 
-		// TODO COMPARE logIndexCounter WITH maxFollowerIndex
+		// server.Log LOOK FOR MAXIMUM INDEX
+		// follower maximum index < logIndexCounter
+
+		maxFollowerIndex := server.getMaxLogIndex(server)
 		if leaderLogIndex > maxFollowerIndex {
 			// then only appendlogentrych
-			fmt.Printf("This is the Log Entry message %s being sent from the leader server %d to follower %d\n",
+			fmt.Printf("\nThis is the Log Entry message %s being sent from the leader server %d to follower %d\n",
 				[]LogEntry{message}, s.serverID, server.serverID)
 			server.AppendLogEntryCh <- []LogEntry{message}
-			// ERROR : cannot use message (variable of type LogEntry) as []LogEntry value in sendcompilerIncompatibleAssign
-			// TODO UPDATE THE FOLLOWER SERVER LOG
-			if !server.isLeader {
-				server.Log[maxFollowerIndex+1] = string(logString)
-				fmt.Printf("This is the Server's full Log \n %+v \n", server.Log) // see entire Log map
-			}
+
+			// UPDATE THE FOLLOWER SERVER LOG
+			server.Log[maxFollowerIndex+1] = string(logString)
+			fmt.Printf("\nThis is the Server's full Log: %+v \n", server.Log) // see entire Log map
+
 			s.ConfirmAppendCh <- ConfirmAppend{
 				ConfirmAppend: "ConfirmAppend",
 			}
 		}
 	}
-	fmt.Printf("AppendEntry is completed Yay!\n")
 }
 
-// TODO CHECK ENTRY COMMIT WORKS
 func (s *Server) entryCommit() {
 	// count num of follower servers and num of confirmAppend received
 	// if num of confirmAppend > num follower servers//2 -> update seatFile
@@ -646,10 +619,6 @@ func (s *Server) entryCommit() {
 }
 
 func (s *Server) getMaxLogIndex(server *Server) int {
-	// For Log in 1 server
-	// Iterate through the Log map
-	// Get the latest & maximum index
-
 	var maxLogIndex int
 	for logIndex, _ := range server.Log {
 		// if LogIndex
@@ -660,11 +629,10 @@ func (s *Server) getMaxLogIndex(server *Server) int {
 	for n := range server.Log {
 		if n > maxLogIndex {
 			maxLogIndex = n
-			fmt.Printf("iter: maxFollowerIndex %d\n", maxLogIndex) // ITERATING THROUGH THE FOLLOWER LOG TO GET MAXIMUM
 		}
 	}
-	fmt.Printf("maxLogIndex %d\n", maxLogIndex) // MAXIMUM INDEX OF FOLLOWER LOG
 
+	//fmt.Printf("maxLogIndex %d\n", maxLogIndex) // MAXIMUM INDEX OF FOLLOWER LOG
 	return maxLogIndex
 }
 
