@@ -281,6 +281,62 @@ func (s *Server) SendHeartbeats() {
 	}
 }
 
+func (s *Server) applyCommand(req common.Request) (string, string) {
+	responseMessage := ""
+	status := "SUCCESS"
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	seatID := strings.ToUpper(strings.TrimSpace(req.SeatID)) // Normalize SeatID
+
+	if seat, exists := s.seats[seatID]; exists {
+		switch req.Type {
+		case "RESERVE":
+			if seat.Status == "available" {
+				s.seats[seatID] = Seat{
+					SeatID:   req.SeatID,
+					Status:   "occupied",
+					ClientID: req.ClientID,
+				}
+				responseMessage = fmt.Sprintf("Seat %s reserved for client %s by %s", seatID, req.ClientID, req.ServerID)
+				s.saveSeats() // Save the updated seat map
+			} else {
+				status = "FAILURE"
+				responseMessage = fmt.Sprintf("Seat %s is already occupied. Client %s by %s", seatID, req.ClientID, req.ServerID)
+			}
+		case "CANCEL":
+			if seat.Status == "occupied" {
+				requestingClientID := getClientIDfromSessionID(req.ClientID)
+				occupyingClientID := getClientIDfromSessionID(seat.ClientID)
+				if requestingClientID != occupyingClientID {
+					status = "FAILURE"
+					responseMessage = fmt.Sprintf("Seat %s is occupied by another client %s. Cannot cancel", seatID, seat.ClientID)
+					break
+				}
+				s.seats[seatID] = Seat{
+					SeatID:   req.SeatID,
+					Status:   "available",
+					ClientID: "",
+				}
+				responseMessage = fmt.Sprintf("Reservation for seat %s cancelled by client %s via %s", seatID, req.ClientID, req.ServerID)
+				s.saveSeats() // Save the updated seat map
+			} else {
+				status = "FAILURE"
+				responseMessage = fmt.Sprintf("Seat %s is not occupied. Cannot cancel. Client %s by %s", seatID, req.ClientID, req.ServerID)
+			}
+		default:
+			status = "FAILURE"
+			responseMessage = fmt.Sprintf("Invalid request type %s for seat %s by client %s", req.Type, seatID, req.ClientID)
+		}
+	} else {
+		status = "FAILURE"
+		responseMessage = fmt.Sprintf("Seat %s does not exist. Client %s by %s", seatID, req.ClientID, req.ServerID)
+	}
+
+	return status, responseMessage
+}
+
 func (s *Server) runServerLoop() {
 	// Prepare the heartbeat ticker
 	ticker := time.NewTicker(interval)
@@ -293,63 +349,93 @@ func (s *Server) runServerLoop() {
 	for {
 		select {
 		case req := <-s.requests:
-			// Handle requests (formerly processQueue logic)
-			responseMessage := ""
-			status := "SUCCESS"
+			newEntry := LogEntry{
+				Term:    s.term,
+				Command: req,
+			}
 
+			// Add entry to leader's log
 			s.mu.Lock()
-			seatID := strings.ToUpper(strings.TrimSpace(req.SeatID)) // Normalize SeatID
-			if seat, exists := s.seats[seatID]; exists {
-				switch req.Type {
-				case "RESERVE":
-					if seat.Status == "available" {
-						s.seats[seatID] = Seat{
-							SeatID:   req.SeatID,
-							Status:   "occupied",
-							ClientID: req.ClientID,
-						}
-						responseMessage = fmt.Sprintf("Seat %s reserved for client %s by %s", seatID, req.ClientID, req.ServerID)
-						s.saveSeats() // Save the updated seat map
-					} else {
-						status = "FAILURE"
-						responseMessage = fmt.Sprintf("Seat %s is already occupied. Client %s by %s", seatID, req.ClientID, req.ServerID)
-					}
-				case "CANCEL":
-					if seat.Status == "occupied" {
-						requestingClientID := getClientIDfromSessionID(req.ClientID)
-						occupyingClientID := getClientIDfromSessionID(seat.ClientID)
-						if requestingClientID != occupyingClientID {
-							status = "FAILURE"
-							responseMessage = fmt.Sprintf("Seat %s is occupied by another client %s. Cannot cancel", seatID, seat.ClientID)
-							break
-						}
-						s.seats[seatID] = Seat{
-							SeatID:   req.SeatID,
-							Status:   "available",
-							ClientID: "",
-						}
-						responseMessage = fmt.Sprintf("Reservation for seat %s cancelled by client %s via %s", seatID, req.ClientID, req.ServerID)
-						s.saveSeats() // Save the updated seat map
-					} else {
-						status = "FAILURE"
-						responseMessage = fmt.Sprintf("Seat %s is not occupied. Cannot cancel. Client %s by %s", seatID, req.ClientID, req.ServerID)
-					}
-				default:
-					status = "FAILURE"
-					responseMessage = fmt.Sprintf("Invalid request type %s for seat %s by client %s", req.Type, seatID, req.ClientID)
-				}
-			} else {
-				status = "FAILURE"
-				responseMessage = fmt.Sprintf("Seat %s does not exist. Client %s by %s", seatID, req.ClientID, req.ServerID)
+			s.logEntries = append(s.logEntries, newEntry)
+			prevLogIndex := len(s.logEntries) - 2
+			prevLogTerm := 0
+			if prevLogIndex >= 0 {
+				prevLogTerm = s.logEntries[prevLogIndex].Term
 			}
 			s.mu.Unlock()
 
-			log.Printf("[%s] %s", status, responseMessage)
+			log.Printf("Server %d: Appending new log entry: %+v", s.serverID, newEntry)
 
-			if responseCh, exists := s.responses[req.ClientID]; exists {
-				responseCh <- common.Response{Status: status, Message: responseMessage}
+			// Prepare AppendEntries RPC
+			appendEntries := AppendEntries{
+				Term:         s.term,
+				LeaderId:     s.serverID,
+				PrevLogIndex: prevLogIndex,
+				PrevLogTerm:  prevLogTerm,
+				Entries:      []LogEntry{newEntry},
+				LeaderCommit: s.commitIndex,
 			}
 
+			successCount := 0
+			majority := len(s.OutgoingCh)/2 + 1
+
+			// Send AppendEntries to all followers
+			for i := range s.OutgoingCh {
+				if i == s.serverID {
+					continue // Skip sending to self
+				}
+				go func(serverID int) {
+					log.Printf("Server %d: Sending AppendEntries to Server %d", s.serverID, serverID)
+					s.OutgoingCh[serverID] <- InternalMessage{
+						SourceId: s.serverID,
+						Type:     "APPENDENTRIES",
+						Data:     appendEntries,
+					}
+				}(i)
+			}
+
+			// Wait for responses
+			for i := 0; i < len(s.OutgoingCh)-1; i++ {
+				response := <-s.IncomingCh
+				if response.Type == "APPENDENTRIESRESPONSE" {
+					respData := response.Data.(AppendEntriesResponse)
+					if respData.Success {
+						successCount++
+						if successCount >= majority {
+							// Step 4: Commit the log entry
+							s.mu.Lock()
+							s.commitIndex = len(s.logEntries) - 1
+							s.mu.Unlock()
+							break
+						}
+					}
+				}
+			}
+			if successCount >= majority {
+				// Apply the command
+				status, responseMessage := s.applyCommand(req)
+				log.Printf("[%s] %s", status, responseMessage)
+
+				// Respond to the client
+				if responseCh, exists := s.responses[req.ClientID]; exists {
+					responseCh <- common.Response{Status: status, Message: responseMessage}
+				}
+			} else {
+				log.Printf("Failed to replicate log entry for request: %+v", req)
+			}
+
+			// Notify client if majority is reached
+			if successCount >= majority {
+				log.Printf("Server %d: Majority achieved, log entry committed", s.serverID)
+				if responseCh, exists := s.responses[req.ClientID]; exists {
+					responseCh <- common.Response{
+						Status:  "SUCCESS",
+						Message: fmt.Sprintf("Log entry committed: %+v", req),
+					}
+				}
+			} else {
+				log.Printf("Server %d: Failed to achieve majority for log entry", s.serverID)
+			}
 		case <-ticker.C:
 			// This block was originally in handleHeartbeats
 			if !s.isAlive {
@@ -428,6 +514,7 @@ func (s *Server) runServerLoop() {
 			}
 
 			switch msg.Type {
+
 			case "HEARTBEAT":
 				log.Printf("Server %d received %s from Server %d", s.serverID, msg.Type, msg.SourceId)
 				lastHeartbeat = time.Now()
@@ -529,7 +616,80 @@ func (s *Server) runServerLoop() {
 						// Negative or stale vote response ignored
 					}
 				}
+
+			case "APPENDENTRIES":
+				data := msg.Data.(AppendEntries)
+				s.mu.Lock()
+				defer s.mu.Unlock()
+
+				if data.Term < s.term {
+					// Reply with failure if the term is outdated
+					response := InternalMessage{
+						SourceId: s.serverID,
+						Type:     "APPENDENTRIESRESPONSE",
+						Data: AppendEntriesResponse{
+							Term:    s.term,
+							Success: false,
+						},
+					}
+					// Send response back to the leader
+					s.OutgoingCh[data.LeaderId] <- response
+					break
+				}
+				// tag is this necessary
+				if data.Term > s.term {
+					s.term = data.Term
+					s.role = Follower
+					s.votedFor = -1
+				}
+
+				if data.PrevLogIndex >= 0 && (data.PrevLogIndex >= len(s.logEntries) || s.logEntries[data.PrevLogIndex].Term != data.PrevLogTerm) {
+					// Log mismatch; send failure response
+					response := InternalMessage{
+						SourceId: s.serverID,
+						Type:     "APPENDENTRIESRESPONSE",
+						Data: AppendEntriesResponse{
+							Term:    s.term,
+							Success: false,
+						},
+					}
+					// Send response back to the leader
+					s.OutgoingCh[data.LeaderId] <- response
+					break
+				}
+
+				s.logEntries = append(s.logEntries[:data.PrevLogIndex+1], data.Entries...)
+
+				// Update commit index
+				if data.LeaderCommit > s.commitIndex {
+					s.commitIndex = min(data.LeaderCommit, len(s.logEntries)-1)
+				}
+				for s.lastApplied < s.commitIndex {
+					s.lastApplied++
+					entry := s.logEntries[s.lastApplied]
+					req := entry.Command
+					s.applyCommand(req)
+				}
+				s.OutgoingCh[data.LeaderId] <- InternalMessage{
+					SourceId: s.serverID,
+					Type:     "APPENDENTRIESRESPONSE",
+					Data: AppendEntriesResponse{
+						Term:    s.term,
+						Success: true,
+					},
+				}
+
+				s.OutgoingCh[data.LeaderId] <- InternalMessage{
+					SourceId: s.serverID,
+					Type:     "APPENDENTRIESRESPONSE",
+					Data: AppendEntriesResponse{
+						Term:    s.term,
+						Success: true,
+					},
+				}
+
 			}
+
 		}
 	}
 }
