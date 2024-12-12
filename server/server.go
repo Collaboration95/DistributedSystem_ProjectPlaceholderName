@@ -325,7 +325,7 @@ func (s *Server) applyLogEntries() {
 	s.saveSeats()
 }
 
-// Handle AppendEntries RPC from leader
+// Handle AppendEntries from leader
 func (s *Server) handleAppendEntries(msg InternalMessage) {
 	data := msg.Data.(map[string]interface{})
 	leaderTerm := data["term"].(int)
@@ -855,6 +855,7 @@ func update_LoadBalancer(LeaderPort string, LeaderID string) {
 	loadBalancer.LeaderPort = LeaderPort
 	loadBalancer.LeaderID = LeaderID
 }
+
 func main() {
 	// Load the seat data from the file
 	loadSeats(seatFile)
