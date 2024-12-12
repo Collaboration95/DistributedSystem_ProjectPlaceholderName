@@ -597,8 +597,6 @@ func update_LoadBalancer(LeaderPort string, LeaderID string) {
 
 // VERSION 1 APPEND ENTRY [ NOT A CONTINUOUS PROCESS]
 func (s *Server) appendEntry(logString logString, servers []*Server) {
-	fmt.Printf("appendEntry is called\n")
-
 	logIndexCounter := 0
 	logIndexCounter++
 
@@ -608,45 +606,29 @@ func (s *Server) appendEntry(logString logString, servers []*Server) {
 	Loperation := logInfo[1]
 	LclientID := logInfo[2]
 
-	fmt.Printf("appendEntry is called 2\n")
 	message := LogEntry{
 		SeatID:    LseatID,
 		Operation: Loperation,
 		ClientID:  LclientID,
 	}
 
-	fmt.Printf("%s just want to see how my beautiful message look", message)
-
-	// TODO FIX THIS AND SEND TO ALL SERVERS
 	// Send to all other servers
 	for i, server := range servers {
-		fmt.Printf("How many server", i)
+		fmt.Sprintf("How many server %d\n", i)
 		// TODO
 		// server.Log LOOK FOR MAXIMUM INDEX ?
 		// follower maximum index < logIndexCounter
 		// then only appendlogentrych
-		fmt.Printf("This is the message %s", []LogEntry{message})
-
-		//Output:
+		fmt.Printf("This is the Log Entry message %s being sent from the leader server %d to follower %d\n",
+			[]LogEntry{message}, s.serverID, server.serverID)
 		server.AppendLogEntryCh <- []LogEntry{message} // ERROR : cannot use message (variable of type LogEntry) as []LogEntry value in sendcompilerIncompatibleAssign
 	}
 
-	// for i := range s.AppendLogEntryCh {
-	// 	fmt.Printf("sending message to all server log log log log\n")
-	// 	s.AppendLogEntryCh[i] <- message
-	// }
-	fmt.Printf("appendEntry is called 3\n")
-
-	// if want to append, split strings for logString
-	// Prepare to wait for confirmations
-
-	// TODO CHECK CONFIRM APPEND
 	s.ConfirmAppendCh <- ConfirmAppend{
 		ConfirmAppend: "ConfirmAppend",
 	}
 
-	fmt.Printf("appendEntry is called 4 complete\n")
-	// s.entryCommit()
+	fmt.Printf("AppendEntry is completed Yay!\n")
 }
 
 // TODO CHECK ENTRY COMMIT WORKS
@@ -656,7 +638,7 @@ func (s *Server) entryCommit() {
 	// check that more than half the num of AppendLogEntry is acknowledged thru ConfirmAppendCh
 	if len(s.ConfirmAppendCh) > len(s.AppendLogEntryCh)/2 {
 		s.saveSeats() // serve the client request and update the seatFile
-		fmt.Printf("aaaaaaaaaaaaaaaaaaaaa Successful entry commit & saved to seatFile aaaaaaaaaaaaaaaaaaaa")
+		fmt.Printf("Successful entry commit & saved to seatFile\n")
 	}
 }
 
