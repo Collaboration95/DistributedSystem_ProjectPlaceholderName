@@ -213,6 +213,10 @@ func (s *Server) ReplicateLog(entry LogEntry) error {
 		}
 
 		go func(serverIndex int) {
+
+			// Print the replication message being sent
+			fmt.Printf("Sending replication message to server %d: %+v\n", serverIndex, replicationMessage)
+
 			// Create a buffered channel to prevent blocking
 			replyCh := make(chan bool, 1)
 
@@ -220,6 +224,7 @@ func (s *Server) ReplicateLog(entry LogEntry) error {
 				// Try to send the message with a timeout
 				select {
 				case s.OutgoingCh[serverIndex] <- replicationMessage:
+					fmt.Printf("xxxxxxxxx     Replication message sent successfully to server %d\n", serverIndex)
 					replyCh <- true
 				case <-ctx.Done():
 					replyCh <- false
@@ -233,9 +238,11 @@ func (s *Server) ReplicateLog(entry LogEntry) error {
 				case responsesCh <- success:
 				default:
 					// Channel might be full, log or handle accordingly
+					fmt.Printf("aaaaaaaaa	Response channel full for server %d\n", serverIndex)
 				}
 			case <-ctx.Done():
 				// Timeout occurred
+				fmt.Printf("bbbbbbb		Timeout occurred while waiting for response from server %d\n", serverIndex)
 			}
 		}(i)
 	}
@@ -246,6 +253,8 @@ func (s *Server) ReplicateLog(entry LogEntry) error {
 		case response := <-responsesCh:
 			if response {
 				replicatedCount++
+				// TODO CHECK WHERE REPLICA OR LOG IS STORED
+				fmt.Printf("Replication confirmed by a follower. Total replicated count: %d\n", replicatedCount)
 			}
 
 			// Check if majority achieved
@@ -295,6 +304,7 @@ func (s *Server) applyLogEntries() {
 	s.saveSeats()
 }
 
+// TODO CHECK IS THIS SENT FROM LEADER OR SENT TO LEADER?
 // Handle AppendEntries RPC from leader
 func (s *Server) handleAppendEntries(msg InternalMessage) {
 	data := msg.Data.(map[string]interface{})
@@ -373,6 +383,8 @@ func (s *Server) handleAppendEntries(msg InternalMessage) {
 		},
 	}
 	s.OutgoingCh[leaderID] <- responseMsg
+
+	// TODO CHECK WHERE ARE THE LOGS BEING SENT ? IS IT RECEIVED BY THE FOLLOWER SERVERS' INCOMINGCH?
 }
 
 // END LOG REPLICATION //
@@ -592,6 +604,42 @@ func (s *Server) runServerLoop() {
 				status = "FAILURE"
 				responseMessage = fmt.Sprintf("Seat %s does not exist. Client %s by %s", seatID, req.ClientID, req.ServerID)
 			}
+
+			// // ADDING APPEND LOG ENTRY
+			//     // Append the operation as a log entry to the leader's log
+			// 	if s.role == Leader {
+			// 		newLogEntry := LogEntry{
+			// 			Term:  s.term,
+			// 			Index: len(s.log),
+			// 			Command: interface{
+			// 				ClientID: req.ClientID,
+			// 				SeatID:   req.SeatID,
+			// 				Type:     req.Type,
+			// 			},
+			// 		}
+			// 		s.log = append(s.log, newLogEntry)
+
+			// 		// Broadcast the new log entry to followers
+			// 		appendEntriesMessage := InternalMessage{
+			// 			SourceId: s.serverID,
+			// 			Type:     "APPENDENTRIES",
+			// 			Data: map[string]interface{}{
+			// 				"term":         s.term,
+			// 				"leaderId":     s.serverID,
+			// 				"prevLogIndex": len(s.log) - 2,
+			// 				"prevLogTerm":  s.log[len(s.log)-2].Term,
+			// 				"entries":      []LogEntry{s.log[len(s.log)-1]},
+			// 				"leaderCommit": s.commitIndex,
+			// 			},
+			// 		}
+			// 		for followerID, ch := range s.OutgoingCh {
+			// 			if followerID != s.serverID {
+			// 				ch <- appendEntriesMessage
+			// 			}
+			// 		}
+			// 	}
+			// 	// end of append entry
+
 			s.mu.Unlock()
 
 			log.Printf("[%s] %s", status, responseMessage)
@@ -781,6 +829,8 @@ func (s *Server) runServerLoop() {
 			case "APPENDENTRIESRESPONSE":
 				// Handle AppendEntries response
 				s.handleAppendEntries(msg)
+				fmt.Printf("---------------------Server %d received AppendEntries response from Server %d\n", s.serverID, msg.SourceId)
+
 				if s.role == Leader {
 					respData := msg.Data.(map[string]interface{})
 					success := respData["success"].(bool)
