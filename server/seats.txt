@@ -1,12 +1,12 @@
-1B: available: 
-4B: occupied: client1-1733969695088088900
 3A: available: 
 4A: available: 
-1A: available: 
-4C: available: 
 1C: occupied: client1-1733965141481567400
+2B: occupied: client1-1733972767962322200
 3C: available: 
-3B: available: 
-2B: available: 
+1B: occupied: client1-1733972331947740600
+4C: available: 
 2C: available: 
 2A: available: 
+1A: occupied: client1-1733972707319161100
+4B: occupied: client1-1733969695088088900
+3B: available: 

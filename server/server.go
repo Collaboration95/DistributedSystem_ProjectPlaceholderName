@@ -584,7 +584,7 @@ func update_LoadBalancer(LeaderPort string, LeaderID string) {
 // 1. Client Update (Read global queue [s.requests]) if write -> appendEntry (add entry to local log of each follower server)
 // 1.1 appendEntry to leaderserver -> appendEntry to followers -> followers ConfirmAppend
 
-// VERSION 1 APPEND ENTRY [ NOT A CONTINUOUS PROCESS]
+// VERSION 1 APPEND ENTRY [NOT A CONTINUOUS PROCESS - Since we are not using heartbeat]
 func (s *Server) appendEntry(logString logString, servers []*Server) {
 
 	// TODO ACCESS MAXIMUM INDEX OF LOG SERVER
@@ -621,7 +621,11 @@ func (s *Server) appendEntry(logString logString, servers []*Server) {
 				[]LogEntry{message}, s.serverID, server.serverID)
 			server.AppendLogEntryCh <- []LogEntry{message}
 			// ERROR : cannot use message (variable of type LogEntry) as []LogEntry value in sendcompilerIncompatibleAssign
-
+			// TODO UPDATE THE FOLLOWER SERVER LOG
+			if !server.isLeader {
+				server.Log[maxFollowerIndex+1] = string(logString)
+				fmt.Printf("This is the Server's full Log \n %+v \n", server.Log) // see entire Log map
+			}
 			s.ConfirmAppendCh <- ConfirmAppend{
 				ConfirmAppend: "ConfirmAppend",
 			}
