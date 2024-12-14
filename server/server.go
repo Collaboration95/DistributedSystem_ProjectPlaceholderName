@@ -320,31 +320,9 @@ func (s *Server) applyLogEntries() {
 	for s.lastApplied < s.commitIndex {
 		s.lastApplied++
 
-		// Double-check to prevent index out of range  *** THERE IS AN ERROR TRIGGERED HERE ***
 		if s.lastApplied >= len(s.log) {
 			fmt.Printf("Warning: Last applied %d is greater than log length %d\n", s.lastApplied, len(s.log))
 			break
-		}
-
-		entry := s.log[s.lastApplied]
-
-		// Apply the log entry to the state machine (seat reservation/cancellation)
-		switch cmd := entry.Command.(type) {
-		case common.Request:
-			switch cmd.Type {
-			case "RESERVE":
-				s.seats[cmd.SeatID] = Seat{
-					SeatID:   cmd.SeatID,
-					Status:   "occupied",
-					ClientID: cmd.ClientID,
-				}
-			case "CANCEL":
-				s.seats[cmd.SeatID] = Seat{
-					SeatID:   cmd.SeatID,
-					Status:   "available",
-					ClientID: "",
-				}
-			}
 		}
 	}
 
@@ -449,14 +427,6 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 	}
 
 	// LOG REPLICATION METHOD START //
-
-	// Validate request before creating log entry
-	validationStatus := s.validateRequest(*req)
-	if validationStatus != "SUCCESS" {
-		res.Status = "FAILURE"
-		res.Message = validationStatus
-		return nil
-	}
 
 	// Create a log entry for the request
 	logEntry := LogEntry{
@@ -957,7 +927,7 @@ func (s *Server) saveSeats() error {
 	return nil
 }
 
-// LOG REPLICATION //
+// LOG REPLICATION ADDITIONAL FUNC //
 // PrintServerLog prints the current state of the server's log
 func (s *Server) PrintServerLog() {
 	roleStr := "Follower"
@@ -1008,26 +978,8 @@ func (s *Server) periodicLogPrinting() {
 		select {
 		case <-ticker.C:
 			s.PrintServerLog()
-
-			// If this is a follower, show last received entries
-			if s.role != Leader {
-				fmt.Println("Last Received Log Entries:")
-				for i := max(0, len(s.log)-5); i < len(s.log); i++ {
-					entry := s.log[i]
-					fmt.Printf("Index: %d, Term: %d, Command: %v\n",
-						entry.Index, entry.Term, entry.Command)
-				}
-			}
 		}
 	}
-}
-
-// Helper function to get the maximum of two integers
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // Helper function to get the minimum of two integers
