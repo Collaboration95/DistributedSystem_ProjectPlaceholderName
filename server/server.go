@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"log"
 	"net"
@@ -55,6 +54,7 @@ type Seat struct {
 	ClientID string
 }
 
+// LOG REPLICATION LogEntry STRUCT //
 type LogEntry struct {
 	Index    int
 	Term     int
@@ -92,13 +92,14 @@ type Server struct {
 	sessionMux   sync.Mutex
 	keepaliveMux sync.Mutex
 
-	// Log Replication //
-	log         []LogEntry
-	commitIndex int
-	lastApplied int
-	nextIndex   []int
-	matchIndex  []int
-	logMutex    sync.RWMutex
+	// LOG REPLICATION SERVER STRUCT //
+	replicatedCount int
+	log             []LogEntry
+	commitIndex     int
+	lastApplied     int
+	nextIndex       []int
+	matchIndex      []int
+	logMutex        sync.RWMutex
 }
 
 func init_Server(numServer int, filePath string) []*Server {
@@ -123,12 +124,13 @@ func init_Server(numServer int, filePath string) []*Server {
 			isAlive:    true,
 			votes:      0,
 
-			// Log Replication //
-			log:         []LogEntry{},
-			commitIndex: -1,
-			lastApplied: -1,
-			nextIndex:   make([]int, numServer),
-			matchIndex:  make([]int, numServer),
+			// LOG REPLICATION SERVER INIT //
+			replicatedCount: 1,
+			log:             []LogEntry{},
+			commitIndex:     -1,
+			lastApplied:     -1,
+			nextIndex:       make([]int, numServer),
+			matchIndex:      make([]int, numServer),
 		}
 
 		// Init nextIndex
@@ -151,116 +153,7 @@ func init_Server(numServer int, filePath string) []*Server {
 	return servers
 }
 
-// START LOG REPLICATION //
-
-// AppendLogEntry adds a new entry to the server's log
-func (s *Server) AppendLogEntry(entry LogEntry) int {
-	s.logMutex.Lock()
-	defer s.logMutex.Unlock()
-
-	entry.Index = len(s.log)
-	entry.Term = s.term
-	s.log = append(s.log, entry)
-	return entry.Index
-}
-
-// ReplicateLog sends log entries to followers
-func (s *Server) ReplicateLog(entry LogEntry) error {
-	if s.role != Leader {
-		return fmt.Errorf("not a leader, cannot replicate log")
-	}
-
-	// First, validate the request
-	status := s.validateRequest(entry.Command.(common.Request))
-	if status != "SUCCESS" {
-		return fmt.Errorf("request validation failed: %s", status)
-	}
-
-	s.logMutex.Lock()
-	// Append the log entry first
-	entry.Index = len(s.log)
-	entry.Term = s.term
-	s.log = append(s.log, entry)
-	s.logMutex.Unlock()
-
-	// Prepare log replication message
-	replicationMessage := InternalMessage{
-		SourceId: s.serverID,
-		Type:     "APPENDENTRIES",
-		Data: map[string]interface{}{
-			"term":         s.term,
-			"leaderId":     s.serverID,
-			"prevLogIndex": entry.Index - 1,
-			"prevLogTerm":  s.term, // Assuming same term for simplicity
-			"entries":      []LogEntry{entry},
-			"leaderCommit": s.commitIndex,
-		},
-	}
-
-	// Synchronization primitives
-	numServers := len(s.OutgoingCh)
-	responsesCh := make(chan bool, numServers)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second) // From 2 -> 10
-	defer cancel()
-
-	// Replication counter starts with 1 (leader always counts)
-	replicatedCount := 1
-
-	// Replicate to all followers
-	for i := range s.OutgoingCh {
-		if i == s.serverID {
-			continue
-		}
-
-		go func(serverIndex int) {
-			// Create a buffered channel to prevent blocking
-			replyCh := make(chan bool, 1)
-
-			go func() {
-				// Try to send the message with a timeout
-				select {
-				case s.OutgoingCh[serverIndex] <- replicationMessage:
-					replyCh <- true
-				case <-ctx.Done():
-					replyCh <- false
-				}
-			}()
-
-			// Wait for the result
-			select {
-			case success := <-replyCh:
-				select {
-				case responsesCh <- success:
-				default:
-					// Channel might be full, log or handle accordingly
-				}
-			case <-ctx.Done():
-				// Timeout occurred
-			}
-		}(i)
-	}
-
-	// Wait for responses
-	for {
-		select {
-		case response := <-responsesCh:
-			if response {
-				replicatedCount++
-			}
-
-			// Check if majority achieved
-			if replicatedCount > numServers/2 {
-				s.commitIndex = entry.Index
-				fmt.Printf("Log entry successfully replicated to majority of servers. Entry Index: %d, Term: %d\n", entry.Index, s.term)
-				return nil
-			}
-
-		case <-ctx.Done():
-			// Timeout occurred before majority achieved
-			return fmt.Errorf("log replication timed out")
-		}
-	}
-}
+// START LOG REPLICATION FUNC //
 
 // Add a method to validate the request before logging
 func (s *Server) validateRequest(req common.Request) string {
@@ -292,37 +185,48 @@ func (s *Server) validateRequest(req common.Request) string {
 	return "FAILURE: Seat does not exist"
 }
 
-// Apply committed log entries to the state machine
-func (s *Server) applyLogEntries() {
-	s.logMutex.Lock()
-	defer s.logMutex.Unlock()
+func (s *Server) ReplicateLog(entry LogEntry) error {
+	fmt.Printf("Server %d (Term %d) trying to send log\n", s.serverID, s.term)
 
-	for s.lastApplied < s.commitIndex {
-		s.lastApplied++
-		entry := s.log[s.lastApplied]
-
-		// Apply the log entry to the state machine (seat reservation/cancellation)
-		switch cmd := entry.Command.(type) {
-		case common.Request:
-			switch cmd.Type {
-			case "RESERVE":
-				s.seats[cmd.SeatID] = Seat{
-					SeatID:   cmd.SeatID,
-					Status:   "occupied",
-					ClientID: cmd.ClientID,
-				}
-			case "CANCEL":
-				s.seats[cmd.SeatID] = Seat{
-					SeatID:   cmd.SeatID,
-					Status:   "available",
-					ClientID: "",
-				}
-			}
-		}
+	// First, validate the request
+	status := s.validateRequest(entry.Command.(common.Request))
+	if status != "SUCCESS" {
+		return fmt.Errorf("request validation failed: %s", status)
 	}
 
-	// Save updated seats to persistent storage
-	s.saveSeats()
+	// Append the log entry first
+	s.logMutex.Lock()
+	entry.Index = len(s.log)
+	entry.Term = s.term
+	s.log = append(s.log, entry)
+	s.logMutex.Unlock()
+
+	LogEntry := InternalMessage{
+		SourceId: s.serverID,
+		Type:     "APPENDENTRIES",
+		Data: map[string]interface{}{
+			"term":         s.term,
+			"leaderId":     s.serverID,
+			"prevLogIndex": entry.Index - 1,
+			"prevLogTerm":  s.term, // Assuming same term for simplicity
+			"entries":      []LogEntry{entry},
+			"leaderCommit": s.commitIndex,
+		},
+	}
+
+	// Send log to all other servers
+	for i := range s.OutgoingCh {
+		if i == s.serverID {
+			continue // Skip sending heartbeat to itself
+		}
+		select {
+		case s.OutgoingCh[i] <- LogEntry:
+			// log sent successfully
+		default:
+			fmt.Printf("Failed to send LogEntry to server %d (channel might be full)\n", i)
+		}
+	}
+	return nil
 }
 
 // Handle AppendEntries from leader
@@ -390,7 +294,6 @@ func (s *Server) handleAppendEntries(msg InternalMessage) {
 	// Update commit index
 	if leaderCommit > s.commitIndex {
 		s.commitIndex = min(leaderCommit, len(s.log)-1)
-		s.applyLogEntries()
 	}
 
 	// Send success response
@@ -405,7 +308,51 @@ func (s *Server) handleAppendEntries(msg InternalMessage) {
 	s.OutgoingCh[leaderID] <- responseMsg
 }
 
-// END LOG REPLICATION //
+func (s *Server) applyLogEntries() {
+	s.logMutex.Lock()
+	defer s.logMutex.Unlock()
+
+	// Ensure we don't try to access log entries that don't exist
+	if s.commitIndex >= len(s.log) {
+		s.commitIndex = len(s.log) - 1
+	}
+
+	for s.lastApplied < s.commitIndex {
+		s.lastApplied++
+
+		// Double-check to prevent index out of range  *** THERE IS AN ERROR TRIGGERED HERE ***
+		if s.lastApplied >= len(s.log) {
+			fmt.Printf("Warning: Last applied %d is greater than log length %d\n", s.lastApplied, len(s.log))
+			break
+		}
+
+		entry := s.log[s.lastApplied]
+
+		// Apply the log entry to the state machine (seat reservation/cancellation)
+		switch cmd := entry.Command.(type) {
+		case common.Request:
+			switch cmd.Type {
+			case "RESERVE":
+				s.seats[cmd.SeatID] = Seat{
+					SeatID:   cmd.SeatID,
+					Status:   "occupied",
+					ClientID: cmd.ClientID,
+				}
+			case "CANCEL":
+				s.seats[cmd.SeatID] = Seat{
+					SeatID:   cmd.SeatID,
+					Status:   "available",
+					ClientID: "",
+				}
+			}
+		}
+	}
+
+	// Save updated seats to persistent storage
+	s.saveSeats()
+}
+
+// LOG REPLICATION FUNC END //
 
 func (s *Server) CreateSession(clientID string, reply *string) error {
 	s.sessionMux.Lock()
@@ -501,6 +448,8 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 		return nil
 	}
 
+	// LOG REPLICATION METHOD START //
+
 	// Validate request before creating log entry
 	validationStatus := s.validateRequest(*req)
 	if validationStatus != "SUCCESS" {
@@ -522,6 +471,8 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 		res.Message = fmt.Sprintf("Log replication failed: %v", err)
 		return nil
 	}
+
+	// LOG REPLICATION METHOD END //
 
 	requestID := fmt.Sprintf("%s-%d", req.ClientID, time.Now().UnixNano())
 	responseCh := make(chan common.Response, 1)
@@ -597,7 +548,7 @@ func (s *Server) runServerLoop() {
 							ClientID: req.ClientID,
 						}
 						responseMessage = fmt.Sprintf("Seat %s reserved for client %s by %s", seatID, req.ClientID, req.ServerID)
-						s.saveSeats() // Save the updated seat map
+						//s.saveSeats() // Save the updated seat map
 					} else {
 						status = "FAILURE"
 						responseMessage = fmt.Sprintf("Seat %s is already occupied. Client %s by %s", seatID, req.ClientID, req.ServerID)
@@ -617,7 +568,7 @@ func (s *Server) runServerLoop() {
 							ClientID: "",
 						}
 						responseMessage = fmt.Sprintf("Reservation for seat %s cancelled by client %s via %s", seatID, req.ClientID, req.ServerID)
-						s.saveSeats() // Save the updated seat map
+						//s.saveSeats() // Save the updated seat map
 					} else {
 						status = "FAILURE"
 						responseMessage = fmt.Sprintf("Seat %s is not occupied. Cannot cancel. Client %s by %s", seatID, req.ClientID, req.ServerID)
@@ -816,15 +767,26 @@ func (s *Server) runServerLoop() {
 						// Negative or stale vote response ignored
 					}
 				}
-			// LOG REPLICATION //
+			// LOG REPLICATION CASES //
+			case "APPENDENTRIES":
+				s.handleAppendEntries(msg)
+
 			case "APPENDENTRIESRESPONSE":
-				// Handle AppendEntries response
+				respData := msg.Data.(map[string]interface{})
+				successValue, ok := respData["success"].(bool)
+				if ok && successValue {
+					s.replicatedCount++
+				}
+
 				if s.role == Leader {
-					respData := msg.Data.(map[string]interface{})
-					success := respData["success"].(bool)
-					s.handleAppendEntries(msg)
-					if !success {
-						fmt.Printf("Log replication failed for a follower\n")
+					// If majority of servers have replicated the log
+					if s.replicatedCount > len(s.OutgoingCh)/2 {
+						s.commitIndex++
+						fmt.Printf("Log entry successfully replicated to majority of servers. New Commit Index: %d, Term: %d\n",
+							s.commitIndex, s.term)
+
+						// Apply the committed log entries
+						s.applyLogEntries()
 					}
 				}
 			}
@@ -921,7 +883,7 @@ func main() {
 
 	for _, server := range servers {
 		go server.runServerLoop()
-		// LOG REPLICATION //
+		// LOG REPLICATION PRINTING //
 		go server.periodicLogPrinting()
 		// go server.handleHeartbeats()
 	}
@@ -1035,25 +997,17 @@ func (s *Server) PrintServerLog() {
 			clientID)
 	}
 
-	fmt.Printf("Commit Index: %d, Last Applied: %d\n", s.commitIndex, s.lastApplied)
-	fmt.Println("===============================\n")
+	fmt.Printf("Commit Index: %d\n", s.commitIndex)
+	fmt.Println("============================================\n")
 }
 
-// Optional: Add a method to periodically print logs
+// Add a method to periodically print logs
 func (s *Server) periodicLogPrinting() {
 	ticker := time.NewTicker(10 * time.Second)
 	for {
 		select {
 		case <-ticker.C:
 			s.PrintServerLog()
-
-			// // Add more detailed log replication information
-			// fmt.Printf("\nDetailed Log Replication Info for Server %d:\n", s.serverID)
-			// fmt.Printf("Current Role: %v\n", s.role)
-			// fmt.Printf("Current Term: %d\n", s.term)
-			// fmt.Printf("Commit Index: %d\n", s.commitIndex)
-			// fmt.Printf("Last Applied: %d\n", s.lastApplied)
-			// fmt.Printf("Total Log Entries: %d\n", len(s.log))
 
 			// If this is a follower, show last received entries
 			if s.role != Leader {
