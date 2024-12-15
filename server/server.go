@@ -18,7 +18,7 @@ import (
 const (
 	seatFile      = "seats.txt"
 	numServers    = 5
-	timeout       = 10 * time.Second
+	timeout       = 8 * time.Second
 	serverTimeout = 3 * time.Second
 	interval      = 1 * time.Second
 	maxTimeout    = 1500 * time.Millisecond
@@ -416,29 +416,41 @@ func (s *Server) serverSession(sessionID string, requestCh chan common.Request, 
 }
 
 func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error {
+	// Lock the session map to check or create a session
 	s.sessionMux.Lock()
 	session, exists := s.sessions[req.ServerID]
+	if !exists {
+		// Create a new session if it doesn't exist
+		requestCh := make(chan common.Request, 10)   // Regular requests
+		keepaliveCh := make(chan common.Request, 10) // Keepalives
+		session = struct {
+			requestCh   chan common.Request
+			keepaliveCh chan common.Request
+		}{
+			requestCh:   requestCh,
+			keepaliveCh: keepaliveCh,
+		}
+		s.sessions[req.ServerID] = session
+
+		// Start a new session goroutine
+		go s.serverSession(req.ServerID, requestCh, keepaliveCh)
+
+		log.Printf("Created new session for Server %s", req.ServerID)
+	}
 	s.sessionMux.Unlock()
 
-	if !exists {
-		res.Status = "FAILURE"
-		res.Message = fmt.Sprintf("Session %s does not exist", req.ServerID)
-		return nil
-	}
-
-	if req.Type == "KEEPALIVE" {
+	if req.Type == "KEEPALIVE" && s.isAlive {
 		session.keepaliveCh <- *req
 		res.Status = "SUCCESS"
 		res.Message = "KeepAlive acknowledged"
 		return nil
-	}
-
-	if s.role != Leader {
-
-		res.Status = "REDIRECT"
-		res.Message = fmt.Sprintf("Server %d is not the leader , redirect to leader")
+	} else if req.Type == "KEEPALIVE" && !s.isAlive {
+		res.Status = "REDIRECTINFORMATION"
+		res.Message = fmt.Sprintf("Server %d is not the leader, redirect to leader", s.serverID)
 		return nil
 	}
+
+	fmt.Printf("----------------Server %s is responding to request, isAlive: %t and role: %s --------\n", req.ServerID, s.isAlive, s.role.String())
 
 	// Create a log entry for the request
 	logEntry := LogEntry{
@@ -454,22 +466,25 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 		return nil
 	}
 
-	// LOG REPLICATION METHOD END //
-
+	// Generate a request ID for tracking responses
 	requestID := fmt.Sprintf("%s-%d", req.ClientID, time.Now().UnixNano())
 	responseCh := make(chan common.Response, 1)
 
+	// Add the response channel to the map
 	s.mu.Lock()
 	s.responses[requestID] = responseCh
 	s.mu.Unlock()
 
+	// Forward the request to the session's request channel
 	req.ClientID = requestID
 	session.requestCh <- *req
 
+	// Wait for the response
 	response := <-responseCh
 	res.Status = response.Status
 	res.Message = response.Message
 
+	// Remove the response channel from the map
 	s.mu.Lock()
 	delete(s.responses, requestID)
 	s.mu.Unlock()
@@ -478,6 +493,76 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 	res.Message = fmt.Sprintf("Operation %s for seat %s processed successfully", req.Type, req.SeatID)
 	return nil
 }
+
+// func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error {
+// 	s.sessionMux.Lock()
+// 	session, exists := s.sessions[req.ServerID]
+// 	s.sessionMux.Unlock()
+
+// 	if !exists {
+// 		res.Status = "FAILURE"
+// 		res.Message = fmt.Sprintf("Session %s does not exist", req.ServerID)
+// 		return nil
+// 	}
+
+// 	if req.Type == "KEEPALIVE" && s.isAlive {
+// 		session.keepaliveCh <- *req
+// 		res.Status = "SUCCESS"
+// 		res.Message = "KeepAlive acknowledged"
+// 		return nil
+// 	} else if req.Type == "KEEPALIVE" && !s.isAlive {
+// 		res.Status = "REDIRECTINFORMATION"
+// 		res.Message = fmt.Sprintf("Server %d is not the leader , redirect to leader")
+// 		return nil
+
+// 	}
+// 	fmt.Printf("----------------Server %s is responding to request , isALive:%t and  role: %s --------\n", req.ServerID, s.isAlive, s.role.String())
+
+// 	// if s.role != Leader {
+
+// 	// 	res.Status = "REDIRECT"
+// 	// 	res.Message = fmt.Sprintf("Server %d is not the leader , redirect to leader")
+// 	// 	return nil
+// 	// }
+
+// 	// Create a log entry for the request
+// 	logEntry := LogEntry{
+// 		Command:  *req,
+// 		ClientID: req.ClientID,
+// 	}
+
+// 	// Attempt to replicate the log
+// 	err := s.ReplicateLog(logEntry)
+// 	if err != nil {
+// 		res.Status = "FAILURE"
+// 		res.Message = fmt.Sprintf("Log replication failed: %v", err)
+// 		return nil
+// 	}
+
+// 	// LOG REPLICATION METHOD END //
+
+// 	requestID := fmt.Sprintf("%s-%d", req.ClientID, time.Now().UnixNano())
+// 	responseCh := make(chan common.Response, 1)
+
+// 	s.mu.Lock()
+// 	s.responses[requestID] = responseCh
+// 	s.mu.Unlock()
+
+// 	req.ClientID = requestID
+// 	session.requestCh <- *req
+
+// 	response := <-responseCh
+// 	res.Status = response.Status
+// 	res.Message = response.Message
+
+// 	s.mu.Lock()
+// 	delete(s.responses, requestID)
+// 	s.mu.Unlock()
+
+// 	res.Status = "SUCCESS"
+// 	res.Message = fmt.Sprintf("Operation %s for seat %s processed successfully", req.Type, req.SeatID)
+// 	return nil
+// }
 
 func (s *Server) SendHeartbeats() {
 	fmt.Printf("Server %d (Term %d) sending heartbeats\n", s.serverID, s.term)
@@ -872,7 +957,7 @@ func main() {
 		// go server.handleHeartbeats()
 	}
 
-	time.Sleep(20 * time.Second)
+	time.Sleep(10 * time.Second)
 	// Start the leader election process
 	// Simulate leader failure
 	fmt.Printf("\n****************************Simulating Leader Failure****************************\n")
@@ -1018,4 +1103,18 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// String method to return the string representation of RaftState
+func (state RaftState) String() string {
+	switch state {
+	case Follower:
+		return "Follower"
+	case Candidate:
+		return "Candidate"
+	case Leader:
+		return "Leader"
+	default:
+		return "Unknown"
+	}
 }
