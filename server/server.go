@@ -186,7 +186,7 @@ func (s *Server) validateRequest(req common.Request) string {
 }
 
 func (s *Server) ReplicateLog(entry LogEntry) error {
-	fmt.Printf("Server %d (Term %d) trying to send log\n", s.serverID, s.term)
+	fmt.Printf("+++++++++++++++++ Server %d (Term %d) calls replicate Log\n", s.serverID, s.term)
 
 	// First, validate the request
 	status := s.validateRequest(entry.Command.(common.Request))
@@ -216,6 +216,7 @@ func (s *Server) ReplicateLog(entry LogEntry) error {
 
 	// Send log to all other servers
 	for i := range s.OutgoingCh {
+		fmt.Printf("Sending APPENDENTRIES TO ALL SERVERS\n")
 		if i == s.serverID {
 			continue // Skip sending heartbeat to itself
 		}
@@ -297,6 +298,7 @@ func (s *Server) handleAppendEntries(msg InternalMessage) {
 	}
 
 	// Send success response
+
 	responseMsg := InternalMessage{
 		SourceId: s.serverID,
 		Type:     "APPENDENTRIESRESPONSE",
@@ -327,6 +329,7 @@ func (s *Server) applyLogEntries() {
 	}
 
 	// Save updated seats to persistent storage
+
 	s.saveSeats()
 }
 
@@ -431,8 +434,9 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 	}
 
 	if s.role != Leader {
-		res.Status = "FAILURE"
-		res.Message = "Not the Leader. Please redirect to the leader"
+
+		res.Status = "REDIRECT"
+		res.Message = fmt.Sprintf("Server %d is not the leader , redirect to leader")
 		return nil
 	}
 
@@ -747,9 +751,11 @@ func (s *Server) runServerLoop() {
 				}
 			// LOG REPLICATION CASES //
 			case "APPENDENTRIES":
+				fmt.Printf("************Diagnostic: Server %d received APPENDENTRIES*******************\n", s.serverID)
 				s.handleAppendEntries(msg)
 
 			case "APPENDENTRIESRESPONSE":
+				fmt.Printf("************Diagnostic: Server %d received APPENDENTRIESRESPONSE*******************\n", s.serverID)
 				respData := msg.Data.(map[string]interface{})
 				successValue, ok := respData["success"].(bool)
 				if ok && successValue {
