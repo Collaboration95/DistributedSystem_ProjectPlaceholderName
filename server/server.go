@@ -386,18 +386,28 @@ func (s *Server) serverSession(sessionID string, requestCh chan common.Request, 
 				<-timer.C
 			}
 			timer.Reset(timeout)
-
 		case <-timer.C:
-			// Timer fired, meaning no activity within the timeout period
-			log.Printf("Session %s timed out. Cleaning up...", sessionID)
+			// Jeopardy detected
+			log.Printf("Session %s is in jeopardy. Allowing grace period...", sessionID)
 
-			// Clean up the session and exit the goroutine
-			s.sessionMux.Lock()
-			delete(s.sessions, sessionID)
-			s.sessionMux.Unlock()
-			close(requestCh)
-			close(keepaliveCh)
-			return
+			// Start a grace period
+			jeopardyTimer := time.NewTimer(2 * timeout) // Double the timeout as grace
+			select {
+			case req := <-keepaliveCh:
+				if req.Type == "KEEPALIVE" {
+					log.Printf("Session %s recovered during grace period.", sessionID)
+					timer.Reset(timeout) // Resume normal operation
+					continue
+				}
+			case <-jeopardyTimer.C:
+				// Grace period expired, terminate session
+				log.Printf("Session %s timed out. Cleaning up...", sessionID)
+				delete(s.sessions, sessionID)
+				close(requestCh)
+				close(keepaliveCh)
+				return
+			}
+			jeopardyTimer.Stop()
 		}
 	}
 }
@@ -425,8 +435,6 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 		res.Message = "Not the Leader. Please redirect to the leader"
 		return nil
 	}
-
-	// LOG REPLICATION METHOD START //
 
 	// Create a log entry for the request
 	logEntry := LogEntry{
@@ -858,8 +866,24 @@ func main() {
 		// go server.handleHeartbeats()
 	}
 
-	// Prevent main from exiting
+	time.Sleep(20 * time.Second)
+	// Start the leader election process
+	// Simulate leader failure
+	fmt.Printf("\n****************************Simulating Leader Failure****************************\n")
+	leaderServer := getLeader(servers)
+
+	leaderServer.isAlive = false
+
 	select {}
+}
+func getLeader(servers []*Server) *Server {
+	for _, server := range servers {
+		if server.isLeader {
+			return server
+		}
+	}
+	return nil
+
 }
 
 // helper functions ( not relevant to flow of code)

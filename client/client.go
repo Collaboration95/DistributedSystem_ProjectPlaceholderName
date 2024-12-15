@@ -56,11 +56,26 @@ func (c *Client) clientSession() {
 			log.Printf("[Client %s] Error sending request: %s", c.ID, err)
 			continue
 		}
+
+		// Check if redirection is needed
+		if res.Status == "REDIRECTINFORMATION" {
+			log.Printf("[Client %s] Received redirect information: %s", c.ID, res.Message)
+			// Reconnect to the new leader
+			newRPCClient, newRpcHandle, err := connectToMasterServer()
+			if err != nil {
+				log.Printf("[Client %s] Failed to reconnect to new leader: %s", c.ID, err)
+				continue
+			}
+			c.RPCClient = newRPCClient
+			c.rpcHandle = newRpcHandle
+			log.Printf("[Client %s] Reconnected to new leader", c.ID)
+			continue
+		}
+
 		log.Printf("[Client %s] Server response (%s): %s", c.ID, res.Status, res.Message)
 	}
 	log.Printf("[Client %s] Request channel closed. Ending session.", c.ID)
 }
-
 func (c *Client) sendHeartbeat() {
 	defer c.WaitGroup.Done()
 
@@ -75,15 +90,37 @@ func (c *Client) sendHeartbeat() {
 				ServerID: c.ServerID,
 				Type:     "KEEPALIVE",
 			}
-
 			var res common.Response
 
 			err := c.RPCClient.Call(fmt.Sprintf("%s.ProcessRequest", c.rpcHandle), &req, &res)
 			if err != nil {
 				log.Printf("[Client %s] Error sending KeepAlive: %s", c.ID, err)
-				return // Assume server is unreachable and exit
+				log.Println("[Client %s] Retrying connection...", c.ID)
+
+				// Retry logic (e.g., reconnect to server or load balancer)
+				c.RPCClient, c.rpcHandle, err = connectToMasterServer()
+				if err != nil {
+					log.Printf("[Client %s] Failed to reconnect. Exiting KeepAlive...", c.ID)
+					return // Exit heartbeat loop
+				}
+				continue
 			}
-			log.Printf("\n[Client %s] KeepAlive response: %s", c.ID, res.Message)
+
+			// Handle redirect if received
+			if res.Status == "REDIRECTINFORMATION" {
+				log.Printf("[Client %s] Redirect information received: %s", c.ID, res.Message)
+				newRPCClient, newRpcHandle, err := connectToMasterServer()
+				if err != nil {
+					log.Printf("[Client %s] Failed to reconnect to new leader: %s", c.ID, err)
+					return
+				}
+				c.RPCClient = newRPCClient
+				c.rpcHandle = newRpcHandle
+				log.Printf("[Client %s] Reconnected to new leader", c.ID)
+				continue
+			}
+
+			log.Printf("[Client %s] KeepAlive response: %s", c.ID, res.Message)
 
 		case <-c.HeartbeatDone:
 			log.Printf("[Client %s] Stopping KeepAlive.", c.ID)
@@ -91,6 +128,37 @@ func (c *Client) sendHeartbeat() {
 		}
 	}
 }
+
+// func (c *Client) sendHeartbeat() {
+// 	defer c.WaitGroup.Done()
+
+// 	ticker := time.NewTicker(HeartbeatInterval)
+// 	defer ticker.Stop()
+
+// 	for {
+// 		select {
+// 		case <-ticker.C:
+// 			req := common.Request{
+// 				ClientID: c.ID,
+// 				ServerID: c.ServerID,
+// 				Type:     "KEEPALIVE",
+// 			}
+
+// 			var res common.Response
+
+// 			err := c.RPCClient.Call(fmt.Sprintf("%s.ProcessRequest", c.rpcHandle), &req, &res)
+// 			if err != nil {
+// 				log.Printf("[Client %s] Error sending KeepAlive: %s", c.ID, err)
+// 				return // Assume server is unreachable and exit
+// 			}
+// 			log.Printf("\n[Client %s] KeepAlive response: %s", c.ID, res.Message)
+
+//			case <-c.HeartbeatDone:
+//				log.Printf("[Client %s] Stopping KeepAlive.", c.ID)
+//				return
+//			}
+//		}
+//	}
 func connectToLoadBalancer(lbAddress string) (string, string, error) {
 	const (
 		maxRetries     = 15
