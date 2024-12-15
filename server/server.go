@@ -18,12 +18,20 @@ import (
 const (
 	seatFile      = "seats.txt"
 	numServers    = 3
-	timeout       = 10 * time.Second
+	timeout       = 15 * time.Second
 	serverTimeout = 3 * time.Second
 	interval      = 1 * time.Second
 	maxTimeout    = 1500 * time.Millisecond
 	minTimeout    = 500 * time.Millisecond
 )
+
+type ReplicationState struct {
+	originalRequest common.Request
+	responseCh      chan common.Response
+	successCount    int
+	totalFollowers  int
+	committed       bool
+}
 
 type InternalMessage struct {
 	SourceId int
@@ -69,11 +77,12 @@ type Server struct {
 	isLeader      bool
 	isAlive       bool
 	// Networking and communication
-	LeaderPort string
-	LocalPort  string
-	serverID   int
-	OutgoingCh []chan InternalMessage
-	IncomingCh chan InternalMessage
+	pendingReplications map[int]*ReplicationState
+	LeaderPort          string
+	LocalPort           string
+	serverID            int
+	OutgoingCh          []chan InternalMessage
+	IncomingCh          chan InternalMessage
 
 	sessions map[string]struct {
 		requestCh   chan common.Request
@@ -134,17 +143,18 @@ func init_Server(numServer int, filePath string) []*Server {
 				requestCh   chan common.Request
 				keepaliveCh chan common.Request
 			}),
-			IncomingCh:  make(chan InternalMessage, 100),
-			OutgoingCh:  make([]chan InternalMessage, numServer),
-			requests:    make(chan common.Request, 100), // Global processing queue
-			responses:   make(map[string]chan common.Response),
-			seats:       make(map[string]Seat),
-			filePath:    filePath,
-			isAlive:     true,
-			votes:       0,
-			logEntries:  []LogEntry{}, // Initialize empty log
-			commitIndex: 0,
-			lastApplied: 0,
+			IncomingCh:          make(chan InternalMessage, 100),
+			OutgoingCh:          make([]chan InternalMessage, numServer),
+			requests:            make(chan common.Request, 100), // Global processing queue
+			responses:           make(map[string]chan common.Response),
+			pendingReplications: make(map[int]*ReplicationState),
+			seats:               make(map[string]Seat),
+			filePath:            filePath,
+			isAlive:             true,
+			votes:               0,
+			logEntries:          []LogEntry{}, // Initialize empty log
+			commitIndex:         0,
+			lastApplied:         0,
 		}
 
 		// Load the seat data from the file
@@ -350,6 +360,46 @@ func (s *Server) applyCommand(req common.Request) (string, string) {
 	return status, responseMessage
 }
 
+func (s *Server) snapshot() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	fmt.Println("\n--- Snapshot of Server State ---")
+	fmt.Printf("Server ID: %d\n", s.serverID)
+	fmt.Printf("Role: %v\n", s.role)
+	fmt.Printf("Term: %d\n", s.term)
+	fmt.Printf("Voted For: %d\n", s.votedFor)
+	fmt.Printf("Votes: %d\n", s.votes)
+	fmt.Printf("Is Leader: %v\n", s.isLeader)
+	fmt.Printf("Commit Index: %d\n", s.commitIndex)
+	fmt.Printf("Last Applied: %d\n", s.lastApplied)
+	fmt.Printf("Log Entries: %v\n", s.logEntries)
+	fmt.Printf("Number of Sessions: %d\n", len(s.sessions))
+	fmt.Printf("Number of Seats: %d\n", len(s.seats))
+
+	fmt.Println("Channels:")
+	fmt.Printf("  IncomingCh Length: %d\n", len(s.IncomingCh))
+	for i, ch := range s.OutgoingCh {
+		fmt.Printf("  OutgoingCh[%d] Length: %d\n", i, len(ch))
+	}
+
+	fmt.Printf("  Requests Channel Length: %d\n", len(s.requests))
+	fmt.Printf("  Responses Map Length: %d\n", len(s.responses))
+
+	for sessionID, session := range s.sessions {
+		fmt.Printf("  Session ID: %s\n", sessionID)
+		fmt.Printf("    RequestCh Length: %d\n", len(session.requestCh))
+		fmt.Printf("    KeepAliveCh Length: %d\n", len(session.keepaliveCh))
+	}
+
+	fmt.Println("Seats:")
+	for seatID, seat := range s.seats {
+		fmt.Printf("  SeatID: %s, Status: %s, ClientID: %s\n", seatID, seat.Status, seat.ClientID)
+	}
+
+	fmt.Println("--- End of Snapshot ---\n")
+}
+
 func (s *Server) runServerLoop() {
 	// Prepare the heartbeat ticker
 	ticker := time.NewTicker(interval)
@@ -362,12 +412,12 @@ func (s *Server) runServerLoop() {
 	for {
 		select {
 		case req := <-s.requests:
+			s.snapshot()
 			newEntry := LogEntry{
 				Term:    s.term,
 				Command: req,
 			}
 
-			// Add entry to leader's log
 			s.mu.Lock()
 			s.logEntries = append(s.logEntries, newEntry)
 			prevLogIndex := len(s.logEntries) - 2
@@ -375,11 +425,12 @@ func (s *Server) runServerLoop() {
 			if prevLogIndex >= 0 {
 				prevLogTerm = s.logEntries[prevLogIndex].Term
 			}
+			currentIndex := len(s.logEntries) - 1
 			s.mu.Unlock()
 
 			log.Printf("Server %d: Appending new log entry: %+v", s.serverID, newEntry)
 
-			// Prepare AppendEntries RPC
+			// Prepare AppendEntries message
 			appendEntries := AppendEntries{
 				Term:         s.term,
 				LeaderId:     s.serverID,
@@ -389,10 +440,19 @@ func (s *Server) runServerLoop() {
 				LeaderCommit: s.commitIndex,
 			}
 
-			successCount := 0
-			majority := len(s.OutgoingCh)/2 + 1
+			// Setup replication state
+			responseCh := make(chan common.Response, 1)
+			s.mu.Lock()
+			s.pendingReplications[currentIndex] = &ReplicationState{
+				originalRequest: req,
+				responseCh:      responseCh,
+				successCount:    1, // leader counts as a successful replication
+				totalFollowers:  len(s.OutgoingCh),
+				committed:       false,
+			}
+			s.mu.Unlock()
 
-			// Send AppendEntries to all followers
+			// Send AppendEntries to all other servers
 			for i := range s.OutgoingCh {
 				if i == s.serverID {
 					continue // Skip sending to self
@@ -405,43 +465,6 @@ func (s *Server) runServerLoop() {
 						Data:     appendEntries,
 					}
 				}(i)
-			}
-
-			// Wait for AppendEntries responses
-			for i := 0; i < len(s.OutgoingCh)-1; i++ {
-				response := <-s.IncomingCh
-				if response.Type == "APPENDENTRIESRESPONSE" {
-					respData := response.Data.(AppendEntriesResponse)
-					if respData.Success {
-						successCount++
-						if successCount >= majority {
-							// Step 4: Commit the log entry
-							s.mu.Lock()
-							s.commitIndex = len(s.logEntries) - 1
-							s.mu.Unlock()
-							break
-						}
-					}
-				}
-			}
-
-			if successCount >= majority {
-				// The log entry is now considered committed
-				s.mu.Lock()
-				s.commitIndex = len(s.logEntries) - 1
-				entry := s.logEntries[s.commitIndex]
-				s.mu.Unlock()
-
-				// Apply the committed entry to the local state machine
-				log.Printf("Server %d: Applying committed entry to state machine: %+v", s.serverID, entry)
-				status, responseMessage := s.applyCommand(entry.Command)
-				log.Printf("[%s] %s", status, responseMessage)
-
-				// Respond to the client
-				if responseCh, exists := s.responses[req.ClientID]; exists {
-					responseCh <- common.Response{Status: status, Message: responseMessage}
-				}
-
 			}
 		case <-ticker.C:
 			// This block was originally in handleHeartbeats
@@ -686,6 +709,43 @@ func (s *Server) runServerLoop() {
 						Success: true,
 					},
 				}
+
+			case "APPENDENTRIESRESPONSE":
+				respData := msg.Data.(AppendEntriesResponse)
+				s.mu.Lock()
+				// Identify which entry this response corresponds to.
+				// For simplicity, assume the last sent entry index or track index in AppendEntries itself.
+				// Here we'll assume we have the prevLogIndex + len(Entries), which equals currentIndex.
+				// In a real implementation, you'd embed the current index in the message or track it differently.
+				currentIndex := len(s.logEntries) - 1
+				repState, exists := s.pendingReplications[currentIndex]
+				if exists && !repState.committed {
+					if respData.Success {
+						repState.successCount++
+						if repState.successCount > repState.totalFollowers/2 {
+							// Achieved majority
+							s.commitIndex = currentIndex
+							entry := s.logEntries[currentIndex]
+							status, responseMessage := s.applyCommand(entry.Command)
+							log.Printf("[%s] %s", status, responseMessage)
+
+							// Mark as committed and respond to the client
+							repState.committed = true
+							if responseCh := repState.responseCh; responseCh != nil {
+								responseCh <- common.Response{Status: status, Message: responseMessage}
+							}
+
+							// Cleanup
+							delete(s.pendingReplications, currentIndex)
+						}
+					} else {
+						// If not successful, we may need to retry or handle log inconsistency.
+						// For now, just log. A full Raft implementation would backtrack and retry.
+						log.Printf("AppendEntries failed from Server %d to Server %d, Term mismatch or log inconsistency.", s.serverID, msg.SourceId)
+					}
+				}
+				s.mu.Unlock()
+				// ...
 
 			}
 
