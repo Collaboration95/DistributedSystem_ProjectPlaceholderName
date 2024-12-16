@@ -203,55 +203,6 @@ func (c *Client) StartSession() {
 	}
 	log.Printf("[Client %s] Session created: %s", c.ID, reply.Message)
 	log.Printf("[Client %s] Raw Data Received: %+v", c.ID, reply.Data)
-
-	// if seats, ok := reply.Data.([]interface{}); ok {
-	// 	seatMap := make(map[string][]string) // Map to group seats by rows
-	// 	for _, seat := range seats {
-	// 		if seatStr, ok := seat.(string); ok {
-	// 			row := string(seatStr[0]) // Extract the row letter (e.g., "1" from "1A")
-	// 			seatMap[row] = append(seatMap[row], seatStr)
-	// 		}
-	// 	}
-
-	// 	// Print seats row by row
-	// 	fmt.Println("Available Seats:")
-	// 	for row := '1'; row <= '9'; row++ { // Adjust range based on the seat rows you have
-	// 		rowKey := string(row) // Convert row number to string (e.g., "1", "2")
-	// 		if seatList, exists := seatMap[rowKey]; exists {
-	// 			fmt.Printf("Row %s: ", rowKey)
-	// 			for i, seat := range seatList {
-	// 				if i > 0 {
-	// 					fmt.Print(", ")
-	// 				}
-	// 				fmt.Print(seat)
-	// 			}
-	// 			fmt.Println()
-	// 		}
-	// 	}
-	// } else if seats, ok := reply.Data.([]string); ok { // Handle direct []string
-	// 	seatMap := make(map[string][]string)
-	// 	for _, seat := range seats {
-	// 		row := string(seat[0]) // Extract the row
-	// 		seatMap[row] = append(seatMap[row], seat)
-	// 	}
-
-	// 	fmt.Println("Available Seats:")
-	// 	for row := '1'; row <= '9'; row++ { // Adjust for actual rows
-	// 		rowKey := string(row)
-	// 		if seatList, exists := seatMap[rowKey]; exists {
-	// 			fmt.Printf("Row %s: ", rowKey)
-	// 			for i, seat := range seatList {
-	// 				if i > 0 {
-	// 					fmt.Print(", ")
-	// 				}
-	// 				fmt.Print(seat)
-	// 			}
-	// 			fmt.Println()
-	// 		}
-	// 	}
-	// } else {
-	// 	fmt.Println("No seats available or invalid response data.")
-	// }
 	if seats, ok := reply.Data.([]interface{}); ok {
 		seatMap := make(map[string]map[string]string) // Map to group seats by rows and columns
 		rows := []string{"1", "2", "3", "4", "5"}     // Define row numbers
