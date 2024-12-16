@@ -129,36 +129,6 @@ func (c *Client) sendHeartbeat() {
 	}
 }
 
-// func (c *Client) sendHeartbeat() {
-// 	defer c.WaitGroup.Done()
-
-// 	ticker := time.NewTicker(HeartbeatInterval)
-// 	defer ticker.Stop()
-
-// 	for {
-// 		select {
-// 		case <-ticker.C:
-// 			req := common.Request{
-// 				ClientID: c.ID,
-// 				ServerID: c.ServerID,
-// 				Type:     "KEEPALIVE",
-// 			}
-
-// 			var res common.Response
-
-// 			err := c.RPCClient.Call(fmt.Sprintf("%s.ProcessRequest", c.rpcHandle), &req, &res)
-// 			if err != nil {
-// 				log.Printf("[Client %s] Error sending KeepAlive: %s", c.ID, err)
-// 				return // Assume server is unreachable and exit
-// 			}
-// 			log.Printf("\n[Client %s] KeepAlive response: %s", c.ID, res.Message)
-
-//			case <-c.HeartbeatDone:
-//				log.Printf("[Client %s] Stopping KeepAlive.", c.ID)
-//				return
-//			}
-//		}
-//	}
 func connectToLoadBalancer(lbAddress string) (string, string, error) {
 	const (
 		maxRetries     = 15
@@ -226,12 +196,134 @@ func connectToMasterServer() (*rpc.Client, string, error) {
 }
 
 func (c *Client) StartSession() {
-	var reply string
+	var reply common.Response
 	err := c.RPCClient.Call(fmt.Sprintf("%s.CreateSession", c.rpcHandle), c.ID, &reply)
 	if err != nil {
 		log.Fatalf("[Client %s] Error creating session: %s", c.ID, err)
 	}
-	log.Printf("[Client %s] Session created: %s", c.ID, reply)
+	log.Printf("[Client %s] Session created: %s", c.ID, reply.Message)
+	log.Printf("[Client %s] Raw Data Received: %+v", c.ID, reply.Data)
+
+	// if seats, ok := reply.Data.([]interface{}); ok {
+	// 	seatMap := make(map[string][]string) // Map to group seats by rows
+	// 	for _, seat := range seats {
+	// 		if seatStr, ok := seat.(string); ok {
+	// 			row := string(seatStr[0]) // Extract the row letter (e.g., "1" from "1A")
+	// 			seatMap[row] = append(seatMap[row], seatStr)
+	// 		}
+	// 	}
+
+	// 	// Print seats row by row
+	// 	fmt.Println("Available Seats:")
+	// 	for row := '1'; row <= '9'; row++ { // Adjust range based on the seat rows you have
+	// 		rowKey := string(row) // Convert row number to string (e.g., "1", "2")
+	// 		if seatList, exists := seatMap[rowKey]; exists {
+	// 			fmt.Printf("Row %s: ", rowKey)
+	// 			for i, seat := range seatList {
+	// 				if i > 0 {
+	// 					fmt.Print(", ")
+	// 				}
+	// 				fmt.Print(seat)
+	// 			}
+	// 			fmt.Println()
+	// 		}
+	// 	}
+	// } else if seats, ok := reply.Data.([]string); ok { // Handle direct []string
+	// 	seatMap := make(map[string][]string)
+	// 	for _, seat := range seats {
+	// 		row := string(seat[0]) // Extract the row
+	// 		seatMap[row] = append(seatMap[row], seat)
+	// 	}
+
+	// 	fmt.Println("Available Seats:")
+	// 	for row := '1'; row <= '9'; row++ { // Adjust for actual rows
+	// 		rowKey := string(row)
+	// 		if seatList, exists := seatMap[rowKey]; exists {
+	// 			fmt.Printf("Row %s: ", rowKey)
+	// 			for i, seat := range seatList {
+	// 				if i > 0 {
+	// 					fmt.Print(", ")
+	// 				}
+	// 				fmt.Print(seat)
+	// 			}
+	// 			fmt.Println()
+	// 		}
+	// 	}
+	// } else {
+	// 	fmt.Println("No seats available or invalid response data.")
+	// }
+	if seats, ok := reply.Data.([]interface{}); ok {
+		seatMap := make(map[string]map[string]string) // Map to group seats by rows and columns
+		rows := []string{"1", "2", "3", "4", "5"}     // Define row numbers
+		cols := []string{"A", "B", "C"}               // Define seat columns
+
+		// Initialize all seats as blocked
+		for _, row := range rows {
+			seatMap[row] = make(map[string]string)
+			for _, col := range cols {
+				seatMap[row][col] = "[X]" // Blocked by default
+			}
+		}
+
+		// Update map for available seats
+		for _, seat := range seats {
+			if seatStr, ok := seat.(string); ok {
+				if len(seatStr) >= 2 { // Ensure seat ID is valid (e.g., "1A")
+					row := string(seatStr[0]) // Extract row (e.g., "1" from "1A")
+					col := string(seatStr[1]) // Extract column (e.g., "A" from "1A")
+					if _, exists := seatMap[row]; exists {
+						seatMap[row][col] = seatStr // Mark seat as available
+					}
+				}
+			}
+		}
+
+		// Print row-wise seats
+		fmt.Println("Available Seats:")
+		for _, row := range rows {
+			fmt.Printf("Row %s: ", row)
+			for _, col := range cols {
+				fmt.Print(seatMap[row][col], " ") // Display seat or blocked square
+			}
+			fmt.Println() // Move to the next row
+		}
+	} else if seats, ok := reply.Data.([]string); ok { // Handle direct []string
+		seatMap := make(map[string]map[string]string) // Map to group seats by rows and columns
+		rows := []string{"1", "2", "3", "4"}          // Define row numbers
+		cols := []string{"A", "B", "C"}               // Define seat columns
+
+		// Initialize all seats as blocked
+		for _, row := range rows {
+			seatMap[row] = make(map[string]string)
+			for _, col := range cols {
+				seatMap[row][col] = "[X]" // Blocked by default
+			}
+		}
+
+		// Update map for available seats
+		for _, seat := range seats {
+			if len(seat) >= 2 { // Ensure seat ID is valid (e.g., "1A")
+				row := string(seat[0]) // Extract row (e.g., "1" from "1A")
+				col := string(seat[1]) // Extract column (e.g., "A" from "1A")
+				if _, exists := seatMap[row]; exists {
+					seatMap[row][col] = seat // Mark seat as available
+				}
+			}
+		}
+
+		// Print row-wise seats
+		fmt.Println("Available Seats:")
+		for _, row := range rows {
+			fmt.Printf("Row %s: ", row)
+			for _, col := range cols {
+				fmt.Print(seatMap[row][col], " ") // Display seat or blocked square
+			}
+			fmt.Println() // Move to the next row
+		}
+	} else {
+		fmt.Println("No seats available or invalid response data.")
+	}
+
 	c.WaitGroup.Add(2)
 	go c.clientSession()
 	go c.sendHeartbeat()
@@ -293,8 +385,6 @@ func main() {
 	}
 	defer rpc_Client.Close()
 
-	// Start the client session
-	// startClientSession(clientID, rpc_Client)
 	client := init_Client(clientID, rpc_Client, rpcHandle)
 	client.StartSession()
 
