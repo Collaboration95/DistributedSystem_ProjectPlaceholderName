@@ -23,7 +23,6 @@ type Client struct {
 	RequestCh     chan common.Request
 	HeartbeatDone chan struct{}
 	WaitGroup     sync.WaitGroup
-	LeaderPort    string
 	rpcHandle     string
 }
 
@@ -139,38 +138,30 @@ func connectToLoadBalancer(lbAddress string) (string, string, error) {
 
 	var backoff time.Duration = initialBackoff
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		// Dial the load balancer
 		lbClient, err := rpc.Dial("tcp", lbAddress)
 		if err != nil {
 			return "", "", fmt.Errorf("failed to connect to load balancer: %w", err)
 		}
 
-		// Prepare request and response
 		req := &common.Request{}
 		res := &common.Response{}
 
-		// Call LoadBalancer.GetLeaderIP
 		err = lbClient.Call("LoadBalancer.GetLeaderIP", req, res)
-		lbClient.Close() // Always close the client after the call
+		lbClient.Close()
 
 		if err != nil {
 			return "", "", fmt.Errorf("failed to call GetLeaderIP on load balancer: %w", err)
 		}
 
-		// Check if the response indicates success
 		if res.Status == "SUCCESS" {
-			// Split the response to get port and ID
 			parts := strings.Split(res.Message, ",")
-			if len(parts) == 2 && parts[0] != "" && parts[1] != "" { // Ensure the response has valid data
+			if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
 				return parts[0], parts[1], nil
 			}
 		}
 
-		// Log a warning and back off before retrying
 		fmt.Printf("Attempt %d: Failed to get valid leader info (Response: %s). Retrying in %v...\n", attempt, res.Message, backoff)
 		time.Sleep(backoff)
-
-		// Increment the backoff duration (exponential growth with jitter)
 		backoff = time.Duration(math.Min(float64(maxBackoff), float64(backoff)*1.5)) + time.Duration(rand.Intn(100))*time.Millisecond
 	}
 
@@ -178,8 +169,6 @@ func connectToLoadBalancer(lbAddress string) (string, string, error) {
 }
 
 func connectToMasterServer() (*rpc.Client, string, error) {
-
-	// First, connect to the load balancer
 	leaderAddress, leaderID, err := connectToLoadBalancer("127.0.0.1:12345")
 	if err != nil {
 		return nil, "", fmt.Errorf("error getting leader from load balancer: %w", err)
@@ -187,7 +176,6 @@ func connectToMasterServer() (*rpc.Client, string, error) {
 	fmt.Println("Leader Address is ", leaderAddress)
 	fmt.Println("Leader ID is ", leaderID)
 
-	// Now dial the leader server returned by the load balancer
 	rpcClient, err := rpc.Dial("tcp", leaderAddress)
 	if err != nil {
 		return nil, "", fmt.Errorf("error connecting to leader server %s: %w", leaderAddress, err)
@@ -201,83 +189,23 @@ func (c *Client) HandleRequest(request common.Request) {
 	c.RequestCh <- request
 }
 
-func (c *Client) ListenToTerminal() {
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Println("Enter your requests in the format 'SeatID RequestType' (e.g., '1A RESERVE'). Type 'done' to finish:")
-
-	for {
-		fmt.Print("Enter your request: ")
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		if strings.ToLower(input) == "done" { // Exit input loop
-			fmt.Println("Finishing input. Closing request channel...")
-			break
-		}
-
-		// Split input into SeatID and Request Type
-		parts := strings.Fields(input)
-		if len(parts) != 2 {
-			fmt.Println("Invalid input. Please enter in the format 'SeatID RequestType'.")
-			continue
-		}
-
-		seatID := parts[0]
-		reqType := parts[1]
-
-		if seatID == "" || reqType == "" {
-			fmt.Println("Invalid input. Both SeatID and Request Type are required.")
-			continue
-		}
-
-		request := common.Request{
-			SeatID: seatID,
-			Type:   reqType,
-		}
-		c.HandleRequest(request)
-	}
-}
-
-func (c *Client) StartSession() {
+func (c *Client) StartSession() error {
 	var reply common.Response
 	err := c.RPCClient.Call(fmt.Sprintf("%s.CreateSession", c.rpcHandle), c.ID, &reply)
 	if err != nil {
-		log.Fatalf("[Client %s] Error creating session: %s", c.ID, err)
+		return fmt.Errorf("[Client %s] Error creating session: %s", c.ID, err)
 	}
 	log.Printf("[Client %s] Session created: %s", c.ID, reply.Message)
 	log.Printf("[Client %s] Raw Data Received: %+v", c.ID, reply.Data)
 
-	// Display the seat map using the helper function
+	// Display the seat map
 	c.displaySeatMap(reply.Data)
 
 	c.WaitGroup.Add(2)
 	go c.clientSession()
 	go c.sendHeartbeat()
 
-	// Listen to terminal for user input
-	c.ListenToTerminal()
-
-	close(c.RequestCh)
-	close(c.HeartbeatDone)
-	c.WaitGroup.Wait()
-	fmt.Printf("Session ended for client: %s\n", c.ID)
-}
-
-func main() {
-	clientID := getClientID()
-
-	// Connect to the server
-	rpc_Client, rpcHandle, err := connectToMasterServer()
-
-	if err != nil {
-		log.Fatalf("Error connecting to server: %s", err)
-	}
-	defer rpc_Client.Close()
-
-	client := init_Client(clientID, rpc_Client, rpcHandle)
-	client.StartSession()
-	time.Sleep(2 * time.Second)
-	// temp
+	return nil
 }
 
 func (c *Client) displaySeatMap(data interface{}) {
@@ -306,7 +234,6 @@ func (c *Client) displaySeatMap(data interface{}) {
 			}
 		}
 
-		// Print row-wise seats
 		fmt.Println("Available Seats:")
 		for _, row := range rows {
 			fmt.Printf("Row %s: ", row)
@@ -321,7 +248,6 @@ func (c *Client) displaySeatMap(data interface{}) {
 		rows := []string{"1", "2", "3", "4"}
 		cols := []string{"A", "B", "C"}
 
-		// Initialize all seats as blocked
 		for _, row := range rows {
 			seatMap[row] = make(map[string]string)
 			for _, col := range cols {
@@ -352,11 +278,74 @@ func (c *Client) displaySeatMap(data interface{}) {
 	}
 }
 
+func main() {
+	clientIDs := []string{"client1", "client2", "client3"}
+
+	clients := make(map[string]*Client)
+	for _, cid := range clientIDs {
+		rpc_Client, rpcHandle, err := connectToMasterServer()
+		if err != nil {
+			log.Fatalf("Error connecting client %s to server: %s", cid, err)
+		}
+		client := init_Client(cid, rpc_Client, rpcHandle)
+		err = client.StartSession()
+		if err != nil {
+			log.Fatalf("Error starting session for client %s: %s", cid, err)
+		}
+		clients[cid] = client
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Enter commands as: clientID SeatID RequestType. Type 'done' to exit.")
+
+	for {
+		fmt.Print("Enter your request: ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+
+		if strings.ToLower(input) == "done" {
+			fmt.Println("Finishing input. Closing all request channels...")
+			break
+		}
+
+		parts := strings.Fields(input)
+		if len(parts) != 3 {
+			fmt.Println("Invalid input. Format: clientID SeatID RequestType")
+			continue
+		}
+
+		clientID := parts[0]
+		seatID := parts[1]
+		reqType := parts[2]
+
+		client, exists := clients[clientID]
+		if !exists {
+			fmt.Printf("No such client: %s\n", clientID)
+			continue
+		}
+
+		request := common.Request{
+			SeatID: seatID,
+			Type:   reqType,
+		}
+		client.HandleRequest(request)
+	}
+
+	// User typed 'done', now shut down all clients
+	for _, client := range clients {
+		close(client.RequestCh)
+		close(client.HeartbeatDone)
+	}
+
+	// Wait for all clients to finish
+	for _, client := range clients {
+		client.WaitGroup.Wait()
+		fmt.Printf("Session ended for client: %s\n", client.ID)
+	}
+}
+
 func getClientID() string {
 	clientID := flag.String("clientID", "", "Unique client ID")
 	flag.Parse()
-	if *clientID == "" {
-		log.Fatalf("Client ID is required. Use --clientID flag to specify one.")
-	}
 	return *clientID
 }
