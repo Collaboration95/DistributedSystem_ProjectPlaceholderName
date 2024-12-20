@@ -333,8 +333,6 @@ func (s *Server) applyLogEntries() {
 	s.saveSeats()
 }
 
-// LOG REPLICATION FUNC END //
-
 func (s *Server) CreateSession(clientID string, reply *common.Response) error {
 	s.sessionMux.Lock()
 	defer s.sessionMux.Unlock()
@@ -372,6 +370,7 @@ func (s *Server) CreateSession(clientID string, reply *common.Response) error {
 	reply.Data = availableSeats
 
 	log.Printf("Created session %s for client %s. Available seats: %v", sessionID, clientID, availableSeats)
+
 	return nil
 }
 
@@ -452,6 +451,7 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 
 		log.Printf("Created new session for Server %s", req.ServerID)
 	}
+
 	s.sessionMux.Unlock()
 
 	if req.Type == "KEEPALIVE" && s.isAlive {
@@ -466,6 +466,12 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 	}
 
 	fmt.Printf("----------------Server %s is responding to request, isAlive: %t and role: %s --------\n", req.ServerID, s.isAlive, s.role.String())
+	if req.Type == "CLEANSEATS" {
+		s.cleanAllSeats()
+		res.Status = "SUCCESS"
+		res.Message = "All seats have been reset to available."
+		return nil
+	}
 
 	// Create a log entry for the request
 	logEntry := LogEntry{
@@ -494,12 +500,10 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 	req.ClientID = requestID
 	session.requestCh <- *req
 
-	// Wait for the response
 	response := <-responseCh
 	res.Status = response.Status
 	res.Message = response.Message
 
-	// Remove the response channel from the map
 	s.mu.Lock()
 	delete(s.responses, requestID)
 	s.mu.Unlock()
@@ -507,6 +511,20 @@ func (s *Server) ProcessRequest(req *common.Request, res *common.Response) error
 	res.Status = "SUCCESS"
 	res.Message = fmt.Sprintf("Operation %s for seat %s processed successfully", req.Type, req.SeatID)
 	return nil
+}
+
+func (s *Server) cleanAllSeats() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for seatID, seat := range localSeats { // Assuming `localSeats` is the map of all seats
+		seat.Status = "available"
+		seat.ClientID = ""
+		localSeats[seatID] = seat
+
+	}
+	s.saveSeats()
+	log.Println("All seats have been reset to available.")
 }
 
 func (s *Server) SendHeartbeats() {
@@ -779,13 +797,11 @@ func (s *Server) runServerLoop() {
 						// Negative or stale vote response ignored
 					}
 				}
-			// LOG REPLICATION CASES //
+
 			case "APPENDENTRIES":
-				// fmt.Printf("************Diagnostic: Server %d received APPENDENTRIES*******************\n", s.serverID)
 				s.handleAppendEntries(msg)
 
 			case "APPENDENTRIESRESPONSE":
-				// fmt.Printf("************Diagnostic: Server %d received APPENDENTRIESRESPONSE*******************\n", s.serverID)
 				respData := msg.Data.(map[string]interface{})
 				successValue, ok := respData["success"].(bool)
 				if ok && successValue {
@@ -799,7 +815,6 @@ func (s *Server) runServerLoop() {
 						fmt.Printf("Log entry successfully replicated to majority of servers. New Commit Index: %d, Term: %d\n",
 							s.commitIndex, s.term)
 
-						// Apply the committed log entries
 						s.applyLogEntries()
 					}
 				}
@@ -864,7 +879,6 @@ func main() {
 	// Give the load balancer some time to initialize
 	time.Sleep(2 * time.Second)
 
-	// Initialize servers
 	servers := init_Server(numServers, seatFile)
 
 	// Register and start each server
@@ -897,18 +911,8 @@ func main() {
 
 	for _, server := range servers {
 		go server.runServerLoop()
-		// LOG REPLICATION PRINTING //
 		go server.periodicLogPrinting()
-		// go server.handleHeartbeats()
 	}
-
-	time.Sleep(20 * time.Second)
-	// Start the leader election process
-	// Simulate leader failure
-	fmt.Printf("\n****************************Simulating Leader Failure****************************\n")
-	leaderServer := getLeader(servers)
-
-	leaderServer.isAlive = false
 
 	select {}
 }
@@ -964,10 +968,18 @@ func loadSeats(filePath string) {
 		localSeats[seat.SeatID] = seat
 	}
 	log.Println("Seats loaded from file.")
+	// fmt.Println("Free seats:")
+	// for _, seat := range localSeats {
+	// 	if seat.Status == "available" {
+	// 		fmt.Printf("%s\n", seat.SeatID)
+	// 	}
+
+	// }
 }
 
 // saveSeats writes the current seat map to a file
 func (s *Server) saveSeats() error {
+	fmt.Printf("Save Seats is being called\n")
 	file, err := os.OpenFile(s.filePath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open file for saving seats: %w", err)

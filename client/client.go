@@ -9,6 +9,7 @@ import (
 	"net/rpc"
 	"os"
 	"rpc-system/common"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,21 @@ const (
 	HeartbeatInterval = 8 * time.Second
 )
 
+var wg sync.WaitGroup
+var mu sync.Mutex
+var wgCounter int
+
+func decrementWaitGroup() {
+	mu.Lock()
+	defer mu.Unlock()
+	if wgCounter > 0 {
+		wg.Done()
+		wgCounter--
+	}
+}
+
+var seatMapPrinted = false
+
 func init_Client(clientID string, rpcClient *rpc.Client, rpcHandle string) *Client {
 	serverID := fmt.Sprintf("server-session-%s", clientID)
 	return &Client{
@@ -48,30 +64,38 @@ func (c *Client) clientSession() {
 		req.ClientID = c.ID
 		req.ServerID = c.ServerID
 		log.Printf("[Client %s] Sending request: %+v", c.ID, req)
-		var res common.Response
 
+		start := time.Now()
+
+		var res common.Response
 		err := c.RPCClient.Call(fmt.Sprintf("%s.ProcessRequest", c.rpcHandle), &req, &res)
+		elapsed := time.Since(start) // Measure how long the call took
+
 		if err != nil {
 			log.Printf("[Client %s] Error sending request: %s", c.ID, err)
+			log.Printf("[Client %s] Request took: %s", c.ID, elapsed)
 			continue
 		}
 
-		// Check if redirection is needed
 		if res.Status == "REDIRECTINFORMATION" {
 			log.Printf("[Client %s] Received redirect information: %s", c.ID, res.Message)
 			// Reconnect to the new leader
 			newRPCClient, newRpcHandle, err := connectToMasterServer()
 			if err != nil {
 				log.Printf("[Client %s] Failed to reconnect to new leader: %s", c.ID, err)
+				log.Printf("[Client %s] Request took: %s", c.ID, elapsed)
 				continue
 			}
 			c.RPCClient = newRPCClient
 			c.rpcHandle = newRpcHandle
 			log.Printf("[Client %s] Reconnected to new leader", c.ID)
+			log.Printf("[Client %s] Request took: %s", c.ID, elapsed)
 			continue
 		}
 
 		log.Printf("[Client %s] Server response (%s): %s", c.ID, res.Status, res.Message)
+		decrementWaitGroup()
+		log.Printf("[Client %s] Request took: %s", c.ID, elapsed)
 	}
 	log.Printf("[Client %s] Request channel closed. Ending session.", c.ID)
 }
@@ -196,10 +220,11 @@ func (c *Client) StartSession() error {
 		return fmt.Errorf("[Client %s] Error creating session: %s", c.ID, err)
 	}
 	log.Printf("[Client %s] Session created: %s", c.ID, reply.Message)
-	log.Printf("[Client %s] Raw Data Received: %+v", c.ID, reply.Data)
 
-	// Display the seat map
-	c.displaySeatMap(reply.Data)
+	if !seatMapPrinted {
+		c.displaySeatMap(reply.Data)
+		seatMapPrinted = true
+	}
 
 	c.WaitGroup.Add(2)
 	go c.clientSession()
@@ -213,7 +238,7 @@ func (c *Client) displaySeatMap(data interface{}) {
 	case []interface{}:
 		seatMap := make(map[string]map[string]string)
 		rows := []string{"1", "2", "3", "4", "5"}
-		cols := []string{"A", "B", "C"}
+		cols := []string{"A", "B", "C", "D", "E", "F", "G"}
 
 		// Initialize all seats as blocked
 		for _, row := range rows {
@@ -245,8 +270,8 @@ func (c *Client) displaySeatMap(data interface{}) {
 
 	case []string:
 		seatMap := make(map[string]map[string]string)
-		rows := []string{"1", "2", "3", "4"}
-		cols := []string{"A", "B", "C"}
+		rows := []string{"1", "2", "3", "4", "5"}
+		cols := []string{"A", "B", "C", "D", "E", "F", "G"}
 
 		for _, row := range rows {
 			seatMap[row] = make(map[string]string)
@@ -277,7 +302,6 @@ func (c *Client) displaySeatMap(data interface{}) {
 		fmt.Println("No seats available or invalid response data.")
 	}
 }
-
 func main() {
 	clientIDs := []string{"client1", "client2", "client3"}
 
@@ -296,7 +320,25 @@ func main() {
 	}
 
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Println("Enter commands as: clientID SeatID RequestType. Type 'done' to exit.")
+	fmt.Println("Enter commands as:")
+	fmt.Println("1) clientID SeatID RequestType")
+	fmt.Println("2) scale N")
+	fmt.Println("Type 'done' to exit.")
+
+	// Predefined seats for random selection
+	seats := []string{
+		"1A", "1B", "1C", "1D", "1E", "1F", "1G",
+		"2A", "2B", "2C", "2D", "2E", "2F", "2G",
+		"3A", "3B", "3C", "3D", "3E", "3F", "3G",
+		"4A", "4B", "4C", "4D", "4E", "4F", "4G",
+		"5A", "5B", "5C", "5D", "5E", "5F", "5G",
+	}
+
+	// Create a slice of client IDs for random selection
+	clientIDsSlice := make([]string, 0, len(clients))
+	for cid := range clients {
+		clientIDsSlice = append(clientIDsSlice, cid)
+	}
 
 	for {
 		fmt.Print("Enter your request: ")
@@ -309,8 +351,69 @@ func main() {
 		}
 
 		parts := strings.Fields(input)
+		if len(parts) == 0 {
+			continue
+		}
+
+		if strings.ToLower(parts[0]) == "scale" {
+			// Format: scale N
+			if len(parts) != 2 {
+				fmt.Println("Invalid scale input. Format: scale N")
+				continue
+			}
+
+			nStr := parts[1]
+			n, err := strconv.Atoi(nStr)
+			if err != nil {
+				fmt.Println("N must be an integer.")
+				continue
+			}
+
+			// Ensure there are enough seats to reserve
+			if n > len(seats) {
+				fmt.Printf("Cannot reserve %d seats; only %d available.\n", n, len(seats))
+				continue
+			}
+
+			// Reserve seats incrementally
+			reservedSeats := 0
+			start := time.Now()
+			for i := 0; i < n; i++ {
+				seatID := seats[i] // Take the next available seat
+				randomClientID := clientIDsSlice[rand.Intn(len(clientIDsSlice))]
+				req := common.Request{
+					SeatID: seatID,
+					Type:   "RESERVE",
+				}
+				wg.Add(1) // Increment WaitGroup counter
+				wgCounter++
+				clients[randomClientID].HandleRequest(req)
+				reservedSeats++
+			}
+
+			wg.Wait() // Wait for all requests to complete
+			elapsed := time.Since(start)
+			fmt.Printf("Reserved %d seats among random clients in %s\n", reservedSeats, elapsed)
+			continue
+		}
+
+		if strings.ToLower(input) == "clean" {
+			// Send CLEANSEATS request to a random client
+			randomClientID := clientIDsSlice[rand.Intn(len(clientIDsSlice))]
+			req := common.Request{
+				Type: "CLEANSEATS",
+			}
+			wg.Add(1) // Increment WaitGroup counter
+			wgCounter++
+			clients[randomClientID].HandleRequest(req)
+			wg.Wait() // Wait for clean operation to complete
+			fmt.Println("All seats have been cleaned and reset to available.")
+			continue
+		}
+
+		// Normal single request format: clientID SeatID RequestType
 		if len(parts) != 3 {
-			fmt.Println("Invalid input. Format: clientID SeatID RequestType")
+			fmt.Println("Invalid input. Format: clientID SeatID RequestType or scale N or clean")
 			continue
 		}
 
