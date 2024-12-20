@@ -28,7 +28,7 @@ type Client struct {
 }
 
 const (
-	HeartbeatInterval = 10 * time.Second
+	HeartbeatInterval = 8 * time.Second
 )
 
 func init_Client(clientID string, rpcClient *rpc.Client, rpcHandle string) *Client {
@@ -76,6 +76,7 @@ func (c *Client) clientSession() {
 	}
 	log.Printf("[Client %s] Request channel closed. Ending session.", c.ID)
 }
+
 func (c *Client) sendHeartbeat() {
 	defer c.WaitGroup.Done()
 
@@ -195,6 +196,48 @@ func connectToMasterServer() (*rpc.Client, string, error) {
 	return rpcClient, leaderID, nil
 }
 
+func (c *Client) HandleRequest(request common.Request) {
+	fmt.Printf("[Client %s] Handling request: %+v\n", c.ID, request)
+	c.RequestCh <- request
+}
+
+func (c *Client) ListenToTerminal() {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Enter your requests in the format 'SeatID RequestType' (e.g., '1A RESERVE'). Type 'done' to finish:")
+
+	for {
+		fmt.Print("Enter your request: ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+
+		if strings.ToLower(input) == "done" { // Exit input loop
+			fmt.Println("Finishing input. Closing request channel...")
+			break
+		}
+
+		// Split input into SeatID and Request Type
+		parts := strings.Fields(input)
+		if len(parts) != 2 {
+			fmt.Println("Invalid input. Please enter in the format 'SeatID RequestType'.")
+			continue
+		}
+
+		seatID := parts[0]
+		reqType := parts[1]
+
+		if seatID == "" || reqType == "" {
+			fmt.Println("Invalid input. Both SeatID and Request Type are required.")
+			continue
+		}
+
+		request := common.Request{
+			SeatID: seatID,
+			Type:   reqType,
+		}
+		c.HandleRequest(request)
+	}
+}
+
 func (c *Client) StartSession() {
 	var reply common.Response
 	err := c.RPCClient.Call(fmt.Sprintf("%s.CreateSession", c.rpcHandle), c.ID, &reply)
@@ -203,129 +246,24 @@ func (c *Client) StartSession() {
 	}
 	log.Printf("[Client %s] Session created: %s", c.ID, reply.Message)
 	log.Printf("[Client %s] Raw Data Received: %+v", c.ID, reply.Data)
-	if seats, ok := reply.Data.([]interface{}); ok {
-		seatMap := make(map[string]map[string]string) // Map to group seats by rows and columns
-		rows := []string{"1", "2", "3", "4", "5"}     // Define row numbers
-		cols := []string{"A", "B", "C"}               // Define seat columns
 
-		// Initialize all seats as blocked
-		for _, row := range rows {
-			seatMap[row] = make(map[string]string)
-			for _, col := range cols {
-				seatMap[row][col] = "[X]" // Blocked by default
-			}
-		}
-
-		// Update map for available seats
-		for _, seat := range seats {
-			if seatStr, ok := seat.(string); ok {
-				if len(seatStr) >= 2 { // Ensure seat ID is valid (e.g., "1A")
-					row := string(seatStr[0]) // Extract row (e.g., "1" from "1A")
-					col := string(seatStr[1]) // Extract column (e.g., "A" from "1A")
-					if _, exists := seatMap[row]; exists {
-						seatMap[row][col] = seatStr // Mark seat as available
-					}
-				}
-			}
-		}
-
-		// Print row-wise seats
-		fmt.Println("Available Seats:")
-		for _, row := range rows {
-			fmt.Printf("Row %s: ", row)
-			for _, col := range cols {
-				fmt.Print(seatMap[row][col], " ") // Display seat or blocked square
-			}
-			fmt.Println() // Move to the next row
-		}
-	} else if seats, ok := reply.Data.([]string); ok { // Handle direct []string
-		seatMap := make(map[string]map[string]string) // Map to group seats by rows and columns
-		rows := []string{"1", "2", "3", "4"}          // Define row numbers
-		cols := []string{"A", "B", "C"}               // Define seat columns
-
-		// Initialize all seats as blocked
-		for _, row := range rows {
-			seatMap[row] = make(map[string]string)
-			for _, col := range cols {
-				seatMap[row][col] = "[X]" // Blocked by default
-			}
-		}
-
-		// Update map for available seats
-		for _, seat := range seats {
-			if len(seat) >= 2 { // Ensure seat ID is valid (e.g., "1A")
-				row := string(seat[0]) // Extract row (e.g., "1" from "1A")
-				col := string(seat[1]) // Extract column (e.g., "A" from "1A")
-				if _, exists := seatMap[row]; exists {
-					seatMap[row][col] = seat // Mark seat as available
-				}
-			}
-		}
-
-		// Print row-wise seats
-		fmt.Println("Available Seats:")
-		for _, row := range rows {
-			fmt.Printf("Row %s: ", row)
-			for _, col := range cols {
-				fmt.Print(seatMap[row][col], " ") // Display seat or blocked square
-			}
-			fmt.Println() // Move to the next row
-		}
-	} else {
-		fmt.Println("No seats available or invalid response data.")
-	}
+	// Display the seat map using the helper function
+	c.displaySeatMap(reply.Data)
 
 	c.WaitGroup.Add(2)
 	go c.clientSession()
 	go c.sendHeartbeat()
 
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Println("Enter your requests (Type 'done' to finish):")
-	for {
-		fmt.Print("Enter SeatID (e.g., 1A): \n")
-		seatID, _ := reader.ReadString('\n')
-		seatID = strings.TrimSpace(seatID)
+	// Listen to terminal for user input
+	c.ListenToTerminal()
 
-		if strings.ToLower(seatID) == "done" { // Exit input loop
-			fmt.Println("Finishing input. Closing request channel...")
-			break
-		}
-
-		fmt.Print("Enter Request Type (e.g., RESERVE or CANCEL): ")
-		reqType, _ := reader.ReadString('\n')
-		reqType = strings.TrimSpace(reqType)
-
-		if seatID == "" || reqType == "" {
-			fmt.Println("Invalid input. Please enter both SeatID and Request Type.")
-			continue
-		}
-
-		request := common.Request{
-			SeatID: seatID,
-			Type:   reqType,
-		}
-		fmt.Printf("Added request to queue: %+v\n", request)
-		c.RequestCh <- request
-	}
-
-	close(c.RequestCh)     // Close the request channel after input is done
-	close(c.HeartbeatDone) // Stop the heartbeat goroutine
-	c.WaitGroup.Wait()     // Wait for both goroutines to finish
+	close(c.RequestCh)
+	close(c.HeartbeatDone)
+	c.WaitGroup.Wait()
 	fmt.Printf("Session ended for client: %s\n", c.ID)
 }
 
-// getClientID parses the client ID from command-line arguments
-func getClientID() string {
-	clientID := flag.String("clientID", "", "Unique client ID")
-	flag.Parse()
-	if *clientID == "" {
-		log.Fatalf("Client ID is required. Use --clientID flag to specify one.")
-	}
-	return *clientID
-}
-
 func main() {
-	// Get the client ID from the command line
 	clientID := getClientID()
 
 	// Connect to the server
@@ -338,5 +276,87 @@ func main() {
 
 	client := init_Client(clientID, rpc_Client, rpcHandle)
 	client.StartSession()
+	time.Sleep(2 * time.Second)
+	// temp
+}
 
+func (c *Client) displaySeatMap(data interface{}) {
+	switch seats := data.(type) {
+	case []interface{}:
+		seatMap := make(map[string]map[string]string)
+		rows := []string{"1", "2", "3", "4", "5"}
+		cols := []string{"A", "B", "C"}
+
+		// Initialize all seats as blocked
+		for _, row := range rows {
+			seatMap[row] = make(map[string]string)
+			for _, col := range cols {
+				seatMap[row][col] = "[X]"
+			}
+		}
+
+		// Mark available seats
+		for _, seat := range seats {
+			if seatStr, ok := seat.(string); ok && len(seatStr) >= 2 {
+				row := string(seatStr[0])
+				col := string(seatStr[1])
+				if _, exists := seatMap[row]; exists {
+					seatMap[row][col] = seatStr
+				}
+			}
+		}
+
+		// Print row-wise seats
+		fmt.Println("Available Seats:")
+		for _, row := range rows {
+			fmt.Printf("Row %s: ", row)
+			for _, col := range cols {
+				fmt.Print(seatMap[row][col], " ")
+			}
+			fmt.Println()
+		}
+
+	case []string:
+		seatMap := make(map[string]map[string]string)
+		rows := []string{"1", "2", "3", "4"}
+		cols := []string{"A", "B", "C"}
+
+		// Initialize all seats as blocked
+		for _, row := range rows {
+			seatMap[row] = make(map[string]string)
+			for _, col := range cols {
+				seatMap[row][col] = "[X]"
+			}
+		}
+
+		for _, seat := range seats {
+			if len(seat) >= 2 {
+				row := string(seat[0])
+				col := string(seat[1])
+				if _, exists := seatMap[row]; exists {
+					seatMap[row][col] = seat
+				}
+			}
+		}
+
+		fmt.Println("Available Seats:")
+		for _, row := range rows {
+			fmt.Printf("Row %s: ", row)
+			for _, col := range cols {
+				fmt.Print(seatMap[row][col], " ")
+			}
+			fmt.Println()
+		}
+	default:
+		fmt.Println("No seats available or invalid response data.")
+	}
+}
+
+func getClientID() string {
+	clientID := flag.String("clientID", "", "Unique client ID")
+	flag.Parse()
+	if *clientID == "" {
+		log.Fatalf("Client ID is required. Use --clientID flag to specify one.")
+	}
+	return *clientID
 }
