@@ -12,4 +12,5 @@ type Request struct {
 type Response struct {
 	Status  string // e.g., "SUCCESS", "FAILURE"
 	Message string
+	Data    interface{} // Can hold a list of seats
 }
