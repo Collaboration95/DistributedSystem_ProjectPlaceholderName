@@ -12,7 +12,7 @@
 
 4. Type in `done` to indicate client session termination
 
-# To book a seat
+# To book/cancel a seat
 
 Enter your requests in the format 'clientID SeatID RequestType' (e.g., 'client1 1A RESERVE')
 
