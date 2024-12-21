@@ -38,7 +38,9 @@ eg : `scale 10`
 You should see an output `Reserved 10 seats among random clients in 4.303833ms,` 
 
 Between each iteration of `scale N` requests , reformat the data by doing `clean` (reset all seat status to available before each iteration of the scaling tests)
+
 For example to test 10 requests followed by 20 requests, the commands will be:
+
 1. clean
 2. scale 10
 3. clean
