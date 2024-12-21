@@ -17,8 +17,10 @@
 Enter your requests in the format 'clientID SeatID RequestType' (e.g., 'client1 1A RESERVE')
 
 - clientID SEATID REQUESTType
-eg: client1 1A RESERVE
-    client1 1B CANCEL
+- Example to reserve
+   - client1 1A RESERVE
+- Example to cancel
+  - client1 1B CANCEL
 
 # Scalability Testing 
 
