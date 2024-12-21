@@ -902,13 +902,13 @@ func main() {
 		// go server.handleHeartbeats()
 	}
 
-	time.Sleep(20 * time.Second)
-	// Start the leader election process
-	// Simulate leader failure
-	fmt.Printf("\n****************************Simulating Leader Failure****************************\n")
-	leaderServer := getLeader(servers)
+	// time.Sleep(20 * time.Second)
+	// // Start the leader election process
+	// // Simulate leader failure
+	// fmt.Printf("\n****************************Simulating Leader Failure****************************\n")
+	// leaderServer := getLeader(servers)
 
-	leaderServer.isAlive = false
+	// leaderServer.isAlive = false
 
 	select {}
 }
