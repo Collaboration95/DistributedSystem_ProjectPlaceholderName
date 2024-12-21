@@ -29,13 +29,13 @@ Enter your requests in the format 'clientID SeatID RequestType' (e.g., 'client1 
 
 # Scalability Testing 
 
-Before starting , please enter `clean` to reformat the seats.txt on the server side .
+1. Before starting, please enter `clean` on terminal running client.go to reformat the seats.txt on the server side .
 This functionality has been added to make the scalability testing process easier.
 
-Then on terminal running client.go run the following command for scaling number of concurrent requests where N is a integer between  1 - 175 (for concurrent requests)
+2. Then on terminal running client.go run the following command for scaling number of concurrent requests where N is a integer between  1 - 175 (for concurrent requests)
 -  `scale N`
 eg : `scale 10`
 You should see an output `Reserved 10 seats among random clients in 4.303833ms,` 
 
-Between `scale N` requests , reeformat the data by doing `clean`
+Between `scale N` requests , reformat the data by doing `clean` (reset all seat status to available before each iteration of the scaling tests)
 
