@@ -1,12 +1,13 @@
 # Movie Booking Website
 
-1. Navigate to a terminal
+1. On a terminal, navigate to the server folder
 cd server
 go run server.go
 
 then
 
-2. On a separate terminal
+2. On a separate terminal, navigate to the client folder
+
 cd client
 go run client.go --clientID=client1  #replace with clientID  like client2, client3
 
