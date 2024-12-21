@@ -13,6 +13,8 @@
 
 Enter your requests in the format 'SeatID RequestType' (e.g., '1A RESERVE')
 
+- 1A RESERVE
+
 <img width="319" alt="image" src="https://github.com/user-attachments/assets/f5775ba3-952c-44e0-abf1-e299050a6bed" />
 
 # To simulate leader failure and election, uncomment lines 905 to 911 (comment these lines out to not simulate leader failure)
