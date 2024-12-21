@@ -9,13 +9,17 @@
    - go run client.go --clientID=client1  #replace with clientID  like client2, client3
 
 
-# To book a seat
+# To book/cancel a seat
 
 Enter your requests in the format 'SeatID RequestType' (e.g., '1A RESERVE')
 
 - 1A RESERVE
 
 <img width="319" alt="image" src="https://github.com/user-attachments/assets/f5775ba3-952c-44e0-abf1-e299050a6bed" />
+
+Example to cancel:
+
+- 1A CANCEL
 
 # Simulate leader failure
 ### To simulate leader failure and election, uncomment lines 905 to 911 shown below 
