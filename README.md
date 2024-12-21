@@ -9,7 +9,7 @@
    - go run client.go --clientID=client1  #replace with clientID  like client2, client3
 
 
-# To book a seat:
+# To book a seat
 
 Enter your requests in the format 'SeatID RequestType' (e.g., '1A RESERVE')
 
