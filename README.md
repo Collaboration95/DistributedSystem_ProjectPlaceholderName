@@ -19,7 +19,7 @@ Enter your requests in the format 'SeatID RequestType' (e.g., '1A RESERVE')
 
 # Simulate leader failure
 ### To simulate leader failure and election, uncomment lines 905 to 911 shown below 
-#### These lines are currently commented out to not simulate leader failure
+### These lines are currently commented out to not simulate leader failure
 
 	// time.Sleep(20 * time.Second)
 	// // Start the leader election process
