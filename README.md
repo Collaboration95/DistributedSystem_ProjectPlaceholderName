@@ -34,6 +34,7 @@ Enter your requests in the format 'clientID SeatID RequestType' (e.g., 'client1 
 -  clean 
 2. Then on `terminal running client.go` run the following command for scaling number of concurrent requests where N is a integer between  1 - 175 (for concurrent requests)
 -  scale N
+  
 eg : `scale 10`
 You should see an output `Reserved 10 seats among random clients in 4.303833ms,` 
 
