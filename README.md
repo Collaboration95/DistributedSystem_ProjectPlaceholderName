@@ -8,7 +8,7 @@
    - cd client
    - go run client.go
 
-3. On terminal running client.go run the following command to reset all seats to available status in seats.txt file
+3. On terminal running client.go run the following command to reset all seats to available status 
    -  `clean` 
 
 5. On terminal running client.go run the following command to terminate client session 
@@ -29,8 +29,7 @@ Enter your requests in the format 'clientID SeatID RequestType' (e.g., 'client1 
 
 # Scalability Testing 
 
-1. Before starting, please run the following command on `terminal running client.go` to reformat the seats.txt file present in the server side.
-   This functionality is to make scalability testing easier by resetting all seat status to available between different test iterations.
+1. Before starting, please run the following command on `terminal running client.go` to resetting all seat status to available between different test iterations.
    - clean 
 3. Then on `terminal running client.go` run the following command for scaling number of concurrent requests where N is a integer between  1 - 175 (for concurrent requests)
    - scale N
