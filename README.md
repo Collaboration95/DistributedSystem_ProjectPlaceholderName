@@ -8,7 +8,7 @@
    - cd client
    - go run client.go
 
-3. On terminal running client.go run the following command to reset all seats to available status 
+3. On terminal running client.go run the following command to reset all seats to available status between each iteration of scaling test
    -  `clean` 
 
 5. On terminal running client.go run the following command to terminate client session 
