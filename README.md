@@ -29,7 +29,7 @@ Enter your requests in the format 'clientID SeatID RequestType' (e.g., 'client1 
 
 # Scalability Testing 
 
-1. Before starting, please run the following command on `terminal running client.go` to resetting all seat status to available between different test iterations.
+1. Before starting, please run the following command on `terminal running client.go` to reset all seat status to available between different test iterations.
    - clean 
 3. Then on `terminal running client.go` run the following command for scaling number of concurrent requests where N is a integer between  1 - 175 (for concurrent requests)
    - scale N
@@ -37,5 +37,11 @@ Enter your requests in the format 'clientID SeatID RequestType' (e.g., 'client1 
 eg : `scale 10`
 You should see an output `Reserved 10 seats among random clients in 4.303833ms,` 
 
-Between `scale N` requests , reformat the data by doing `clean` (reset all seat status to available before each iteration of the scaling tests)
+Between each iteration of `scale N` requests , reformat the data by doing `clean` (reset all seat status to available before each iteration of the scaling tests)
+For example to test 10 requests followed by 20 requests, the commands will be:
+1. clean
+2. scale 10
+3. clean
+4. scale 20
+5. clean
 
