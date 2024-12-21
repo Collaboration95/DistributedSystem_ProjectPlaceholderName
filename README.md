@@ -10,11 +10,13 @@
 
 3. Type in `clean` to reformat the seats.txt file. 
 
+4. Type in `done` to indicate client session termination
+
 # To book a seat
 
-Enter your requests in the format 'SeatID RequestType' (e.g., '1A RESERVE')
+Enter your requests in the format 'clientID SeatID RequestType' (e.g., 'client1 1A RESERVE')
 
-- clientID SEATID ACTION
+- clientID SEATID REQUESTType
 eg: client1 1A RESERVE
     client1 1B CANCEL
 
