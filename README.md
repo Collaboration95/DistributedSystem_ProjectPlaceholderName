@@ -1,15 +1,12 @@
 # Movie Booking Website
 
-1. On a terminal, navigate to the server folder
-cd server
-go run server.go
+1. On a terminal, navigate to the server folder, run the following commands
+   1. cd server
+   2. go run server.go
 
-then
-
-2. On a separate terminal, navigate to the client folder
-
-cd client
-go run client.go --clientID=client1  #replace with clientID  like client2, client3
+2. On a separate terminal, navigate to the client folder, run the following commands
+   1. cd client
+   2. go run client.go --clientID=client1  #replace with clientID  like client2, client3
 
 
 # To book a seat:
