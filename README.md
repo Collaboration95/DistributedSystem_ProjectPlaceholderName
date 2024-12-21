@@ -8,6 +8,8 @@
    - cd client
    - go run client.go
 
+3. Type in `clean` to reformat the seats.txt file. 
+
 # To book a seat
 
 Enter your requests in the format 'SeatID RequestType' (e.g., '1A RESERVE')
