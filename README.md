@@ -8,9 +8,11 @@
    - cd client
    - go run client.go
 
-3. Type in `clean` to reformat the seats.txt file. 
+3. On terminal running client.go run the following command to reset all seats to available status in seats.txt file
+   -  `clean` 
 
-4. Type in `done` to indicate client session termination
+5. On terminal running client.go run the following command to terminate client session 
+   -  `done` 
 
 # To book/cancel a seat
 
