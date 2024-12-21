@@ -21,15 +21,19 @@ Enter your requests in the format 'clientID SeatID RequestType' (e.g., 'client1 
 - clientID SEATID REQUESTType
 - Example to reserve
    - client1 1A RESERVE
+ <img width="320" alt="image" src="https://github.com/user-attachments/assets/745f13e5-18d3-496d-ac4e-34b253c1af2d" />
+
 - Example to cancel
-  - client1 1B CANCEL
+  - client1 1A CANCEL
+<img width="323" alt="image" src="https://github.com/user-attachments/assets/6495a8a4-9a8e-46c7-8d65-8d807b679252" />
 
 # Scalability Testing 
 
 Before starting , please enter `clean` to reformat the seats.txt on the server side .
 This functionality has been added to make the scalability testing process easier.
 
-Then enter `scale N` Where N is a integer between  1 - 175 (for concurrent requests)
+Then on terminal running client.go run the following command for scaling number of concurrent requests where N is a integer between  1 - 175 (for concurrent requests)
+-  `scale N`
 eg : `scale 10`
 You should see an output `Reserved 10 seats among random clients in 4.303833ms,` 
 
